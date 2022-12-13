@@ -166,10 +166,10 @@ class ViTHybridPatchEmbeddings(nn.Module):
         feature_dim = self.backbone.channels[-1]
 
         if feature_size is None:
-            dummy_image = torch.zeros(1, num_channels, image_size[0], image_size[1])
-            feature_map = self.backbone._get_feature_map(dummy_image)
-            feature_size = feature_map.shape[-2:]
-            feature_dim = feature_map.shape[1]
+            feature_map = config.backbone_featmap_shape
+
+            feature_size = feature_map[-2:]
+            feature_dim = feature_map[1]
         else:
             feature_size = (
                 feature_size if isinstance(feature_size, collections.abc.Iterable) else (feature_size, feature_size)
@@ -358,7 +358,6 @@ class ViTHybridOutput(nn.Module):
         return hidden_states
 
 
-# Copied from transformers.models.vit.modeling_vit.ViTLayer with ViT->ViTHybrid
 class ViTHybridLayer(nn.Module):
     """This corresponds to the Block class in the timm implementation."""
 
@@ -387,7 +386,8 @@ class ViTHybridLayer(nn.Module):
         outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
 
         # first residual connection
-        hidden_states = attention_output + hidden_states
+        # We assign to correct device for `accelerate`, check: https://github.com/huggingface/transformers/pull/20705/
+        hidden_states = attention_output + hidden_states.to(attention_output.device)
 
         # in ViTHybrid, layernorm is also applied after self-attention
         layer_output = self.layernorm_after(hidden_states)
