@@ -54,7 +54,7 @@ SPECIAL_CASES_TO_ALLOW = {
     # used internally in the configuration class file
     "LongT5Config": ["feed_forward_proj"],
     # used internally in the configuration class file
-    "SwitchTransformersConfig": ["feed_forward_proj"],
+    "SwitchTransformersConfig": ["feed_forward_proj", "num_sparse_decoder_layers", "num_sparse_encoder_layers"],
     # having default values other than `1e-5` - we can't fix them without breaking
     "BioGptConfig": ["layer_norm_eps"],
     # having default values other than `1e-5` - we can't fix them without breaking
@@ -98,7 +98,6 @@ SPECIAL_CASES_TO_ALLOW.update(
         "SwinConfig": True,
         "Swin2SRConfig": True,
         "Swinv2Config": True,
-        "SwitchTransformersConfig": True,
         "TableTransformerConfig": True,
         "TapasConfig": True,
         "TrajectoryTransformerConfig": True,

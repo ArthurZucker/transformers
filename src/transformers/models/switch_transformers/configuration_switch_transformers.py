@@ -60,8 +60,6 @@ class SwitchTransformersConfig(PretrainedConfig):
             Number of attention heads for each attention layer in the Transformer encoder.
         num_experts (`int`, *optional*, defaults to 8):
             Number of experts for each SwitchTransformer layer.
-        router_type (`str`, *optional*, defaults to `"tokens_masked"`):
-            Router type - choose between `"tokens_masked", `"tokens_scatter"` and `"experts_masked"`.
         router_bias (`bool`, *optional*, defaults to `True`):
             Whether to add a bias to the router.
         router_jitter_noise (`float`, *optional*, defaults to 0.1):
@@ -89,7 +87,7 @@ class SwitchTransformersConfig(PretrainedConfig):
         feed_forward_proj (`string`, *optional*, defaults to `"relu"`):
             Type of feed forward layer to be used. Should be one of `"relu"` or `"gated-gelu"`. SwitchTransformersv1.1
             uses the `"gated-gelu"` feed forward projection. Original SwitchTransformers uses `"relu"`.
-        add_router_probs (`bool`, *optional*, defaults to `False`):
+        output_router_logits (`bool`, *optional*, defaults to `False`):
             Whether to output router probabilities to compute router auxiliary loss.
         use_cache (`bool`, *optional*, defaults to `True`):
             Whether or not the model should return the last key/values attentions (not used by all models).
@@ -111,7 +109,6 @@ class SwitchTransformersConfig(PretrainedConfig):
         num_sparse_decoder_layers=3,
         num_heads=12,
         num_experts=8,
-        router_type="tokens_masked",
         router_bias=False,
         router_jitter_noise=0.01,
         router_dtype="float32",
@@ -125,7 +122,7 @@ class SwitchTransformersConfig(PretrainedConfig):
         initializer_factor=1.0,
         feed_forward_proj="relu",
         is_encoder_decoder=True,
-        add_router_probs=False,
+        output_router_logits=False,
         use_cache=True,
         pad_token_id=0,
         eos_token_id=1,
@@ -157,7 +154,6 @@ class SwitchTransformersConfig(PretrainedConfig):
             self.decoder_sparse_step = self.num_decoder_layers  # HACK: this will create 0 sparse layers
 
         self.num_heads = num_heads
-        self.router_type = router_type
         self.num_experts = num_experts
         self.expert_capacity = expert_capacity
         self.router_bias = router_bias
@@ -175,7 +171,7 @@ class SwitchTransformersConfig(PretrainedConfig):
         self.initializer_factor = initializer_factor
         self.feed_forward_proj = feed_forward_proj
         self.use_cache = use_cache
-        self.add_router_probs = add_router_probs
+        self.output_router_logits = output_router_logits
 
         self.router_z_loss_coef = router_z_loss_coef
         self.router_aux_loss_coef = router_aux_loss_coef
