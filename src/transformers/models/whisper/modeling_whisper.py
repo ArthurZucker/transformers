@@ -32,6 +32,7 @@ from ...modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     Seq2SeqLMOutput,
     Seq2SeqModelOutput,
+    SequenceClassifierOutput,
 )
 from ...modeling_utils import PreTrainedModel
 from ...utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging, replace_return_docstrings
@@ -702,6 +703,33 @@ WHISPER_INPUTS_DOCSTRING = r"""
             Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
 """
 
+WHISPER_ENCODER_INPUTS_DOCSTRING = r"""
+    Args:
+        input_features (`torch.FloatTensor` of shape `(batch_size, feature_size, sequence_length)`):
+            Float values mel features extracted from the raw speech waveform. Raw speech waveform can be obtained by
+            loading a `.flac` or `.wav` audio file into an array of type `List[float]` or a `numpy.ndarray`, *e.g.* via
+            the soundfile library (`pip install soundfile`). To prepare the array into `input_features`, the
+            [`AutoFeatureExtractor`] should be used for extracting the mel features, padding and conversion into a
+            tensor of type `torch.FloatTensor`. See [`~WhisperFeatureExtractor.__call__`]
+        head_mask (`torch.Tensor` of shape `(encoder_layers, encoder_attention_heads)`, *optional*):
+            Mask to nullify selected heads of the attention modules in the encoder. Mask values selected in `[0, 1]`:
+
+            - 1 indicates the head is **not masked**,
+            - 0 indicates the head is **masked**.
+        encoder_outputs (`tuple(tuple(torch.FloatTensor)`, *optional*):
+            Tuple consists of (`last_hidden_state`, *optional*: `hidden_states`, *optional*: `attentions`)
+            `last_hidden_state` of shape `(batch_size, sequence_length, hidden_size)`, *optional*) is a sequence of
+            hidden-states at the output of the last layer of the encoder.
+        output_attentions (`bool`, *optional*):
+            Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
+            tensors for more detail.
+        output_hidden_states (`bool`, *optional*):
+            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
+            more detail.
+        return_dict (`bool`, *optional*):
+            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
+"""
+
 
 class WhisperEncoder(WhisperPreTrainedModel):
     """
@@ -710,7 +738,6 @@ class WhisperEncoder(WhisperPreTrainedModel):
 
     Args:
         config: WhisperConfig
-        embed_tokens (nn.Embedding): output embedding
     """
 
     def __init__(self, config: WhisperConfig):
@@ -740,6 +767,12 @@ class WhisperEncoder(WhisperPreTrainedModel):
         for param in self.parameters():
             param.requires_grad = False
         self._requires_grad = False
+
+    def get_input_embeddings(self) -> nn.Module:
+        return self.conv1
+
+    def set_input_embeddings(self, value: nn.Module):
+        self.conv1 = value
 
     def forward(
         self,
@@ -997,11 +1030,20 @@ class WhisperDecoder(WhisperPreTrainedModel):
         )
 
         # embed positions
-        positions = self.embed_positions(input_ids, past_key_values_length=past_key_values_length)
+        if input_ids is not None:
+            positions = self.embed_positions(input_ids, past_key_values_length=past_key_values_length)
+        else:
+            positions = self.embed_positions(inputs_embeds, past_key_values_length=past_key_values_length)
 
         hidden_states = inputs_embeds + positions
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
+        if self.gradient_checkpointing and self.training:
+            if use_cache:
+                logger.warning_once(
+                    "`use_cache = True` is incompatible with gradient checkpointing. Setting `use_cache = False`..."
+                )
+                use_cache = False
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -1026,12 +1068,6 @@ class WhisperDecoder(WhisperPreTrainedModel):
             past_key_value = past_key_values[idx] if past_key_values is not None else None
 
             if self.gradient_checkpointing and self.training:
-                if use_cache:
-                    logger.warning(
-                        "`use_cache = True` is incompatible with gradient checkpointing. Setting `use_cache ="
-                        " False`..."
-                    )
-                    use_cache = False
 
                 def create_custom_forward(module):
                     def custom_forward(*inputs):
@@ -1304,6 +1340,9 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
     def set_output_embeddings(self, new_embeddings):
         self.proj_out = new_embeddings
 
+    def get_input_embeddings(self) -> nn.Module:
+        return self.model.get_input_embeddings()
+
     def freeze_encoder(self):
         """
         Calling this function will disable the gradient computation for the Whisper encoder so that its parameters will
@@ -1472,8 +1511,8 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
                 Task to use for generation, either "translate" or "transcribe". The `model.config.forced_decoder_ids`
                 will be updated accordingly.
             language (`bool`, *optional*):
-                Language token to use for generation, should be in the form `<|en|>`. You can find all the possible
-                language tokens in the `model.generation_config.lang_to_id` dictionary.
+                Language token to use for generation, can be either in the form of `<|en|>`, `en` or `english`. You can
+                find all the possible language tokens in the `model.generation_config.lang_to_id` dictionary.
             is_multilingual (`bool`, *optional*):
                 Whether or not the model is multilingual.
             kwargs:
@@ -1508,32 +1547,34 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
             if not hasattr(generation_config, "no_timestamps_token_id"):
                 raise ValueError(
                     "You are trying to return timestamps, but the generation config is not properly set."
-                    "Make sure to initialize the generation config with the correct `no_timestamps_token_id`."
-                    "For more details on how to generate the approtiate config, refer to [#21878](https://github.com/huggingface/transformers/issues/21878)"
+                    "Make sure to initialize the generation config with the correct attributes that are needed such as `no_timestamps_token_id`."
+                    "For more details on how to generate the approtiate config, refer to https://github.com/huggingface/transformers/issues/21878#issuecomment-1451902363"
                 )
 
             generation_config.return_timestamps = return_timestamps
         else:
             generation_config.return_timestamps = False
-        if is_multilingual is not None:
-            generation_config.is_multilingual = is_multilingual
 
         if language is not None:
             generation_config.language = language
+        if task is not None:
+            generation_config.task = task
 
         forced_decoder_ids = []
-
-        if hasattr(generation_config, "is_multilingual") and generation_config.is_multilingual:
+        if task is not None or language is not None:
             if hasattr(generation_config, "language"):
                 if generation_config.language in generation_config.lang_to_id.keys():
                     language_token = generation_config.language
                 elif generation_config.language in TO_LANGUAGE_CODE.keys():
                     language_token = f"<|{TO_LANGUAGE_CODE[generation_config.language]}|>"
                 else:
-                    raise ValueError(f"The `{generation_config.language}` language token is not supported.")
+                    raise ValueError(
+                        f"Unsupported language: {self.language}. Language should be one of:"
+                        f" {list(TO_LANGUAGE_CODE.keys()) if generation_config.language in TO_LANGUAGE_CODE.keys() else list(TO_LANGUAGE_CODE.values())}."
+                    )
                 forced_decoder_ids.append((1, generation_config.lang_to_id[language_token]))
             else:
-                forced_decoder_ids.append((1, None))
+                forced_decoder_ids.append((1, None))  # automatically detect the language
 
             if hasattr(generation_config, "task"):
                 if generation_config.task in TASK_IDS:
@@ -1543,24 +1584,22 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
                         f"The `{generation_config.task}`task is not supported. The task should be one of `{TASK_IDS}`"
                     )
             else:
-                forced_decoder_ids.append((2, generation_config.task_to_id["transcribe"]))
+                forced_decoder_ids.append((2, generation_config.task_to_id["transcribe"]))  # defaults to transcribe
+            if hasattr(generation_config, "no_timestamps_token_id") and not generation_config.return_timestamps:
+                idx = forced_decoder_ids[-1][0] + 1 if forced_decoder_ids else 1
+                forced_decoder_ids.append((idx, generation_config.no_timestamps_token_id))
 
         # Legacy code for backward compatibility
-        if hasattr(self.config, "forced_decoder_ids") and forced_decoder_ids != self.generation.forced_decoder_ids:
-            warnings.warn(
-                "You have modified the pretrained model configuration to control generation. This is a"
-                " deprecated strategy to control generation and will be removed soon, in a future version."
-                " Please use a generation configuration file (see"
-                " https://huggingface.co/docs/transformers/main_classes/text_generation)"
-            )
+        elif hasattr(self.config, "forced_decoder_ids") and self.config.forced_decoder_ids is not None:
             forced_decoder_ids = self.config.forced_decoder_ids
+        elif (
+            hasattr(self.generation_config, "forced_decoder_ids")
+            and self.generation_config.forced_decoder_ids is not None
+        ):
+            forced_decoder_ids = self.generation_config.forced_decoder_ids
 
         if generation_config.return_timestamps:
             logits_processor = [WhisperTimeStampLogitsProcessor(generation_config)]
-        else:
-            if forced_decoder_ids and forced_decoder_ids[-1][0] != generation_config.no_timestamps_token_id:
-                idx = forced_decoder_ids[-1][0] + 1 if forced_decoder_ids else 1
-                forced_decoder_ids.append((idx, generation_config.no_timestamps_token_id))
 
         if len(forced_decoder_ids) > 0:
             generation_config.forced_decoder_ids = forced_decoder_ids
@@ -1603,3 +1642,129 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
         for layer_past in past_key_values:
             reordered_past += (tuple(past_state.index_select(0, beam_idx) for past_state in layer_past),)
         return reordered_past
+
+
+@add_start_docstrings(
+    """
+    Whisper Encoder Model with a sequence classification head on top (a linear layer over the pooled output) for tasks
+    like SUPERB Keyword Spotting.
+    """,
+    WHISPER_ENCODER_INPUTS_DOCSTRING,
+)
+class WhisperForAudioClassification(WhisperPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+
+        self.encoder = WhisperEncoder(config)
+        num_layers = config.num_hidden_layers + 1  # transformer layers + input embeddings
+        if config.use_weighted_layer_sum:
+            self.layer_weights = nn.Parameter(torch.ones(num_layers) / num_layers)
+        self.projector = nn.Linear(config.hidden_size, config.classifier_proj_size)
+        self.classifier = nn.Linear(config.classifier_proj_size, config.num_labels)
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def freeze_encoder(self):
+        """
+        Calling this function will disable the gradient computation for the Whisper encoder so that its parameters will
+        not be updated during training. Only the projection layers and classification head will be updated.
+        """
+        self.encoder._freeze_parameters()
+
+    def get_input_embeddings(self) -> nn.Module:
+        return self.encoder.get_input_embeddings()
+
+    def set_input_embeddings(self, value: nn.Module):
+        self.encoder.set_input_embeddings(value)
+
+    @add_start_docstrings_to_model_forward(WHISPER_ENCODER_INPUTS_DOCSTRING)
+    @replace_return_docstrings(output_type=SequenceClassifierOutput, config_class=_CONFIG_FOR_DOC)
+    def forward(
+        self,
+        input_features: Optional[torch.LongTensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        encoder_outputs: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
+        labels: Optional[torch.LongTensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
+            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
+            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
+
+        Returns:
+
+        Example:
+
+        ```python
+        >>> import torch
+        >>> from transformers import AutoFeatureExtractor, WhisperForAudioClassification
+        >>> from datasets import load_dataset
+
+        >>> feature_extractor = AutoFeatureExtractor.from_pretrained("sanchit-gandhi/whisper-medium-fleurs-lang-id")
+        >>> model = WhisperForAudioClassification.from_pretrained("sanchit-gandhi/whisper-medium-fleurs-lang-id")
+
+        >>> ds = load_dataset("google/fleurs", "all", split="validation", streaming=True)
+        >>> sample = next(iter(ds))
+
+        >>> inputs = feature_extractor(
+        ...     sample["audio"]["array"], sampling_rate=sample["audio"]["sampling_rate"], return_tensors="pt"
+        ... )
+        >>> input_features = inputs.input_features
+
+        >>> with torch.no_grad():
+        ...     logits = model(input_features).logits
+
+        >>> predicted_class_ids = torch.argmax(logits).item()
+        >>> predicted_label = model.config.id2label[predicted_class_ids]
+        >>> predicted_label
+        'af_za'
+        ```"""
+
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        if encoder_outputs is None:
+            encoder_outputs = self.encoder(
+                input_features,
+                head_mask=head_mask,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
+
+        if self.config.use_weighted_layer_sum:
+            hidden_states = torch.stack(encoder_outputs, dim=1)
+            norm_weights = nn.functional.softmax(self.layer_weights, dim=-1)
+            hidden_states = (hidden_states * norm_weights.view(-1, 1, 1)).sum(dim=1)
+        else:
+            hidden_states = encoder_outputs[0]
+
+        hidden_states = self.projector(hidden_states)
+        pooled_output = hidden_states.mean(dim=1)
+
+        logits = self.classifier(pooled_output)
+
+        loss = None
+
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
+
+        if not return_dict:
+            output = (logits,) + encoder_outputs[1:]
+            return ((loss,) + output) if loss is not None else output
+
+        return SequenceClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=encoder_outputs.hidden_states,
+            attentions=encoder_outputs.attentions,
+        )
