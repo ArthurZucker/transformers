@@ -98,6 +98,7 @@ _natten_available = _is_package_available("natten")
 _onnx_available = _is_package_available("onnx")
 _openai_available = _is_package_available("openai")
 _optimum_available = _is_package_available("optimum")
+_auto_gptq_available = _is_package_available("auto_gptq")
 _pandas_available = _is_package_available("pandas")
 _peft_available = _is_package_available("peft")
 _phonemizer_available = _is_package_available("phonemizer")
@@ -554,6 +555,10 @@ def is_optimum_available():
     return _optimum_available
 
 
+def is_auto_gptq_available():
+    return _auto_gptq_available
+
+
 def is_optimum_neuron_available():
     return _optimum_available and _is_package_available("optimum.neuron")
 
@@ -996,6 +1001,11 @@ JIEBA_IMPORT_ERROR = """
 jieba`. Please note that you may need to restart your runtime after installation.
 """
 
+PEFT_IMPORT_ERROR = """
+{0} requires the peft library but it was not found in your environment. You can install it with pip: `pip install
+peft`. Please note that you may need to restart your runtime after installation.
+"""
+
 BACKENDS_MAPPING = OrderedDict(
     [
         ("bs4", (is_bs4_available, BS4_IMPORT_ERROR)),
@@ -1029,6 +1039,7 @@ BACKENDS_MAPPING = OrderedDict(
         ("decord", (is_decord_available, DECORD_IMPORT_ERROR)),
         ("cython", (is_cython_available, CYTHON_IMPORT_ERROR)),
         ("jieba", (is_jieba_available, JIEBA_IMPORT_ERROR)),
+        ("peft", (is_peft_available, PEFT_IMPORT_ERROR)),
     ]
 )
 

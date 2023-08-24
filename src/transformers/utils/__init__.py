@@ -70,6 +70,7 @@ from .hub import (
     TRANSFORMERS_CACHE,
     TRANSFORMERS_DYNAMIC_MODULE_NAME,
     EntryNotFoundError,
+    PushInProgress,
     PushToHubMixin,
     RepositoryNotFoundError,
     RevisionNotFoundError,
@@ -103,6 +104,7 @@ from .import_utils import (
     get_torch_version,
     is_accelerate_available,
     is_apex_available,
+    is_auto_gptq_available,
     is_bitsandbytes_available,
     is_bs4_available,
     is_coloredlogs_available,
@@ -177,13 +179,17 @@ from .import_utils import (
     requires_backends,
     torch_only_method,
 )
+from .peft_utils import (
+    ADAPTER_CONFIG_NAME,
+    ADAPTER_SAFE_WEIGHTS_NAME,
+    ADAPTER_WEIGHTS_NAME,
+    check_peft_version,
+    find_adapter_config_file,
+)
 
 
 WEIGHTS_NAME = "pytorch_model.bin"
 WEIGHTS_INDEX_NAME = "pytorch_model.bin.index.json"
-ADAPTER_CONFIG_NAME = "adapter_config.json"
-ADAPTER_WEIGHTS_NAME = "adapter_model.bin"
-ADAPTER_SAFE_WEIGHTS_NAME = "adapter_model.safetensors"
 TF2_WEIGHTS_NAME = "tf_model.h5"
 TF2_WEIGHTS_INDEX_NAME = "tf_model.h5.index.json"
 TF_WEIGHTS_NAME = "model.ckpt"
