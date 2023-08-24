@@ -171,7 +171,6 @@ class LlamaTokenizer(PreTrainedTokenizer):
             tokenizer.LoadFromSerializedProto(sp_model)
         return tokenizer
 
-
     def __getstate__(self):
         state = self.__dict__.copy()
         state["sp_model"] = None
@@ -209,7 +208,6 @@ class LlamaTokenizer(PreTrainedTokenizer):
         if tokens[0] == SPIECE_UNDERLINE and tokens[1] in self.all_special_tokens:
             tokens = tokens[1:]
         return tokens
-
 
     # Copied from transformers.models.t5.tokenization_t5.T5Tokenizer._tokenize
     def _tokenize(self, text, **kwargs):

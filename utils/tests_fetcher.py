@@ -396,9 +396,9 @@ def get_doctest_files(diff_with_last_commit: bool = False) -> List[str]:
             print(f"Parent commit: {commit}")
         test_files_to_run = get_diff_for_doctesting(repo, repo.head.commit, parent_commits)
 
-    # These are files not doctested yet.
-    with open("utils/not_doctested.txt") as fp:
-        not_doctested = set(fp.read().strip().split("\n"))
+    # This is the full list of doctest tests
+    with open("utils/documentation_tests.txt") as fp:
+        documentation_tests = set(fp.read().strip().split("\n"))
     # Do not run slow doctest tests
     with open("utils/slow_documentation_tests.txt") as fp:
         slow_documentation_tests = set(fp.read().strip().split("\n"))
