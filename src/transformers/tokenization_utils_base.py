@@ -2209,7 +2209,6 @@ class PreTrainedTokenizerBase(SpecialTokensMixin, PushToHubMixin):
                 " it is kept for forward compatibility, but it is recommended to update your `tokenizer_config.json` by uploading it again."
                 " You will see the new `added_tokens_decoder` attribute that will store the relevant information."
             )
-            # ISSUEEE FSNETTTTTTTT
             # begin legacy: read the added_tokens_file and update kwargs with special_tokens_map if modified
             if special_tokens_map_file is not None:
                 with open(special_tokens_map_file, encoding="utf-8") as special_tokens_map_handle:
@@ -2233,7 +2232,7 @@ class PreTrainedTokenizerBase(SpecialTokensMixin, PushToHubMixin):
                 with open(added_tokens_file, encoding="utf-8") as added_tokens_handle:
                     added_tok_encoder = json.load(added_tokens_handle)
                 # legacy: we have to init with (rstrip=True, lstrip=True)
-                strip = True if not "Fast" in cls.__name__ else False
+                strip = True if "Fast" not in cls.__name__ else False
                 added_tokens_decoder = {
                     index: AddedToken(token, rstrip=strip, lstrip=strip) for token, index in added_tok_encoder.items()
                 }

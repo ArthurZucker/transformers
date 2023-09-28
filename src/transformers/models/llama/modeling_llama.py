@@ -365,7 +365,6 @@ class LlamaAttention(nn.Module):
             key_states = torch.cat([past_key_value[0], key_states], dim=2)
             value_states = torch.cat([past_key_value[1], value_states], dim=2)
 
-        past_key_value = (key_states, value_states) if use_cache else None
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -409,7 +408,7 @@ class LlamaAttention(nn.Module):
         if not output_attentions:
             attn_weights = None
 
-        return attn_output, attn_weights, past_key_value
+        return attn_output, attn_weights, (key_states, value_states) if use_cache else None
 
 
 class LlamaFlashAttention2(LlamaAttention):
@@ -458,8 +457,6 @@ class LlamaFlashAttention2(LlamaAttention):
             key_states = torch.cat([past_key_value[0], key_states], dim=2)
             value_states = torch.cat([past_key_value[1], value_states], dim=2)
 
-        past_key_value = (key_states, value_states) if use_cache else None
-
         query_states = query_states.transpose(1, 2)
         key_states = key_states.transpose(1, 2)
         value_states = value_states.transpose(1, 2)
@@ -496,7 +493,7 @@ class LlamaFlashAttention2(LlamaAttention):
         if not output_attentions:
             attn_weights = None
 
-        return attn_output, attn_weights, past_key_value
+        return attn_output, attn_weights,  (key_states, value_states) if use_cache else None
 
     def _flash_attention_forward(
         self, query_states, key_states, value_states, padding_mask, query_length, dropout=0.0, softmax_scale=None
