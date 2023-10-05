@@ -1183,10 +1183,16 @@ class SpecialTokensMixin:
         can be used. It's more fullproof.
         """
 
-        if self.hasattr("_added_tokens_decoder"):
+        if hasattr(self, "_added_tokens_decoder"):
             # reset the special tokens for slow and conversion
             for token in self._added_tokens_decoder:
-                token.special = False
+                if str(token) in self.additional_special_tokens:
+                    token.special = False
+
+            for token in value:
+                token = str(token)
+                if token in self.added_tokens_encoder and token not in self.all_special_tokens:
+                    self._added_tokens_decoder[self.added_tokens_encoder[token]].special = True
         else:
             self._additional_special_tokens = value
             return
