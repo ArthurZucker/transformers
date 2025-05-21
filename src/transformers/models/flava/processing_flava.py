@@ -36,6 +36,7 @@ class FlavaProcessor(ProcessorMixin):
         image_processor ([`FlavaImageProcessor`], *optional*): The image processor is a required input.
         tokenizer ([`BertTokenizerFast`], *optional*): The tokenizer is a required input.
     """
+
     attributes = ["image_processor", "tokenizer"]
     image_processor_class = "FlavaImageProcessor"
     tokenizer_class = ("BertTokenizer", "BertTokenizerFast")
@@ -162,3 +163,6 @@ class FlavaProcessor(ProcessorMixin):
             FutureWarning,
         )
         return self.image_processor
+
+
+__all__ = ["FlavaProcessor"]

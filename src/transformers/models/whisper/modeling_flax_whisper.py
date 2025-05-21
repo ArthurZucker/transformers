@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Flax whisper model."""
+"""Flax whisper model."""
 
 import math
 import random
@@ -867,7 +867,7 @@ class FlaxWhisperPreTrainedModel(FlaxPreTrainedModel):
     def __init__(
         self,
         config: WhisperConfig,
-        input_shape: Tuple[int] = (1, 80, 3000),
+        input_shape: Optional[Tuple[int]] = None,
         seed: int = 0,
         dtype: jnp.dtype = jnp.float32,
         _do_init: bool = True,
@@ -875,6 +875,8 @@ class FlaxWhisperPreTrainedModel(FlaxPreTrainedModel):
         **kwargs,
     ):
         module = self.module_class(config=config, dtype=dtype, gradient_checkpointing=gradient_checkpointing, **kwargs)
+        if input_shape is None:
+            input_shape = (1, config.num_mel_bins, 2 * config.max_source_positions)
         super().__init__(config, module, input_shape=input_shape, seed=seed, dtype=dtype, _do_init=_do_init)
 
     def enable_gradient_checkpointing(self):
@@ -968,7 +970,7 @@ class FlaxWhisperPreTrainedModel(FlaxPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         train: bool = False,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: PRNGKey = None,
         **kwargs,
     ):
@@ -1023,12 +1025,12 @@ class FlaxWhisperPreTrainedModel(FlaxPreTrainedModel):
         encoder_attention_mask: Optional[jnp.ndarray] = None,
         decoder_attention_mask: Optional[jnp.ndarray] = None,
         decoder_position_ids: Optional[jnp.ndarray] = None,
-        past_key_values: dict = None,
+        past_key_values: Optional[dict] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         train: bool = False,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: PRNGKey = None,
     ):
         r"""
@@ -1142,7 +1144,7 @@ class FlaxWhisperPreTrainedModel(FlaxPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         train: bool = False,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: PRNGKey = None,
     ):
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -1276,12 +1278,12 @@ class FlaxWhisperForConditionalGeneration(FlaxWhisperPreTrainedModel):
         encoder_attention_mask: Optional[jnp.ndarray] = None,
         decoder_attention_mask: Optional[jnp.ndarray] = None,
         decoder_position_ids: Optional[jnp.ndarray] = None,
-        past_key_values: dict = None,
+        past_key_values: Optional[dict] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         train: bool = False,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: PRNGKey = None,
     ):
         r"""
@@ -1629,7 +1631,7 @@ class FlaxWhisperForAudioClassification(FlaxWhisperPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         train: bool = False,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: PRNGKey = None,
         **kwargs,
     ):
@@ -1668,7 +1670,7 @@ FLAX_WHISPER_AUDIO_CLASSIFICATION_DOCSTRING = r"""
     >>> model = FlaxWhisperForAudioClassification.from_pretrained(
     ...     "sanchit-gandhi/whisper-medium-fleurs-lang-id", from_pt=True
     ... )
-    >>> ds = load_dataset("google/fleurs", "all", split="validation", streaming=True)
+    >>> ds = load_dataset("google/fleurs", "all", split="validation", streaming=True, trust_remote_code=True)
 
     >>> sample = next(iter(ds))
 
@@ -1692,3 +1694,11 @@ overwrite_call_docstring(
 append_replace_return_docstrings(
     FlaxWhisperForAudioClassification, output_type=FlaxSequenceClassifierOutput, config_class=_CONFIG_FOR_DOC
 )
+
+
+__all__ = [
+    "FlaxWhisperForConditionalGeneration",
+    "FlaxWhisperModel",
+    "FlaxWhisperPreTrainedModel",
+    "FlaxWhisperForAudioClassification",
+]

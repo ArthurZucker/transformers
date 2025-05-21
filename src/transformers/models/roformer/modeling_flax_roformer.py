@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Flax RoFormer model."""
+"""Flax RoFormer model."""
 
 from typing import Callable, Optional, Tuple
 
@@ -43,25 +43,16 @@ logger = logging.get_logger(__name__)
 _CHECKPOINT_FOR_DOC = "junnyu/roformer_chinese_base"
 _CONFIG_FOR_DOC = "RoFormerConfig"
 
-FLAX_ROFORMER_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "junnyu/roformer_chinese_small",
-    "junnyu/roformer_chinese_base",
-    "junnyu/roformer_chinese_char_small",
-    "junnyu/roformer_chinese_char_base",
-    "junnyu/roformer_small_discriminator",
-    "junnyu/roformer_small_generator"
-    # See all RoFormer models at https://huggingface.co/models?filter=roformer
-]
-
 
 ROFORMER_START_DOCSTRING = r"""
 
     This model inherits from [`FlaxPreTrainedModel`]. Check the superclass documentation for the generic methods the
     library implements for all its model (such as downloading, saving and converting weights from PyTorch models)
 
-    This model is also a Flax Linen [flax.linen.Module](https://flax.readthedocs.io/en/latest/flax.linen.html#module)
-    subclass. Use it as a regular Flax linen Module and refer to the Flax documentation for all matter related to
-    general usage and behavior.
+    This model is also a
+    [flax.linen.Module](https://flax.readthedocs.io/en/latest/api_reference/flax.linen/module.html) subclass. Use it as
+    a regular Flax linen Module and refer to the Flax documentation for all matter related to general usage and
+    behavior.
 
     Finally, this model supports inherent JAX features such as:
 
@@ -271,7 +262,7 @@ class FlaxRoFormerSelfAttention(nn.Module):
 
     @staticmethod
     def apply_rotary_position_embeddings(sinusoidal_pos, query_layer, key_layer, value_layer=None):
-        sin, cos = sinusoidal_pos.split(2, axis=-1)
+        sin, cos = jnp.split(sinusoidal_pos, 2, axis=-1)
         sin_pos = jnp.stack([sin, sin], axis=-1).reshape(sinusoidal_pos.shape)
         cos_pos = jnp.stack([cos, cos], axis=-1).reshape(sinusoidal_pos.shape)
 
@@ -657,7 +648,7 @@ class FlaxRoFormerPreTrainedModel(FlaxPreTrainedModel):
         attention_mask=None,
         token_type_ids=None,
         head_mask=None,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: jax.random.PRNGKey = None,
         train: bool = False,
         output_attentions: Optional[bool] = None,
@@ -1055,7 +1046,7 @@ class FlaxRoFormerForQuestionAnsweringModule(nn.Module):
         hidden_states = outputs[0]
 
         logits = self.qa_outputs(hidden_states)
-        start_logits, end_logits = logits.split(self.config.num_labels, axis=-1)
+        start_logits, end_logits = jnp.split(logits, self.config.num_labels, axis=-1)
         start_logits = start_logits.squeeze(-1)
         end_logits = end_logits.squeeze(-1)
 
@@ -1087,3 +1078,14 @@ append_call_sample_docstring(
     FlaxQuestionAnsweringModelOutput,
     _CONFIG_FOR_DOC,
 )
+
+
+__all__ = [
+    "FlaxRoFormerForMaskedLM",
+    "FlaxRoFormerForMultipleChoice",
+    "FlaxRoFormerForQuestionAnswering",
+    "FlaxRoFormerForSequenceClassification",
+    "FlaxRoFormerForTokenClassification",
+    "FlaxRoFormerModel",
+    "FlaxRoFormerPreTrainedModel",
+]

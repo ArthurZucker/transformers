@@ -16,6 +16,12 @@ rendered properly in your Markdown viewer.
 
 # UniSpeech-SAT
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="FlashAttention" src="https://img.shields.io/badge/%E2%9A%A1%EF%B8%8E%20FlashAttention-eae0c8?style=flat">
+<img alt="SDPA" src="https://img.shields.io/badge/SDPA-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The UniSpeech-SAT model was proposed in [UniSpeech-SAT: Universal Speech Representation Learning with Speaker Aware
@@ -31,13 +37,16 @@ this paper, we aim to improve the existing SSL framework for speaker representat
 introduced for enhancing the unsupervised speaker information extraction. First, we apply the multi-task learning to
 the current SSL framework, where we integrate the utterance-wise contrastive loss with the SSL objective function.
 Second, for better speaker discrimination, we propose an utterance mixing strategy for data augmentation, where
-additional overlapped utterances are created unsupervisely and incorporate during training. We integrate the proposed
+additional overlapped utterances are created unsupervisedly and incorporate during training. We integrate the proposed
 methods into the HuBERT framework. Experiment results on SUPERB benchmark show that the proposed system achieves
 state-of-the-art performance in universal representation learning, especially for speaker identification oriented
 tasks. An ablation study is performed verifying the efficacy of each proposed method. Finally, we scale up training
 dataset to 94 thousand hours public audio data and achieve further performance improvement in all SUPERB tasks.*
 
-Tips:
+This model was contributed by [patrickvonplaten](https://huggingface.co/patrickvonplaten). The Authors' code can be
+found [here](https://github.com/microsoft/UniSpeech/tree/main/UniSpeech-SAT).
+
+## Usage tips
 
 - UniSpeechSat is a speech model that accepts a float array corresponding to the raw waveform of the speech signal.
   Please use [`Wav2Vec2Processor`] for the feature extraction.
@@ -45,10 +54,10 @@ Tips:
   decoded using [`Wav2Vec2CTCTokenizer`].
 - UniSpeechSat performs especially well on speaker verification, speaker identification, and speaker diarization tasks.
 
-This model was contributed by [patrickvonplaten](https://huggingface.co/patrickvonplaten). The Authors' code can be
-found [here](https://github.com/microsoft/UniSpeech/tree/main/UniSpeech-SAT).
+> [!NOTE]
+> The `head_mask` argument is ignored when using all attention implementation other than "eager". If you have a `head_mask` and want it to have effect, load the model with `XXXModel.from_pretrained(model_id, attn_implementation="eager")`
 
-## Documentation resources
+## Resources
 
 - [Audio classification task guide](../tasks/audio_classification)
 - [Automatic speech recognition task guide](../tasks/asr)

@@ -16,6 +16,11 @@ rendered properly in your Markdown viewer.
 
 # DeBERTa
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
+</div>
+
 ## Overview
 
 The DeBERTa model was proposed in [DeBERTa: Decoding-enhanced BERT with Disentangled Attention](https://arxiv.org/abs/2006.03654) by Pengcheng He, Xiaodong Liu, Jianfeng Gao, Weizhu Chen It is based on Google's
@@ -94,6 +99,9 @@ A list of official Hugging Face and community (indicated by 🌎) resources to h
     - build_inputs_with_special_tokens
     - create_token_type_ids_from_sequences
 
+<frameworkcontent>
+<pt>
+
 ## DebertaModel
 
 [[autodoc]] DebertaModel
@@ -122,6 +130,9 @@ A list of official Hugging Face and community (indicated by 🌎) resources to h
 
 [[autodoc]] DebertaForQuestionAnswering
     - forward
+
+</pt>
+<tf>
 
 ## TFDebertaModel
 
@@ -152,3 +163,7 @@ A list of official Hugging Face and community (indicated by 🌎) resources to h
 
 [[autodoc]] TFDebertaForQuestionAnswering
     - call
+
+</tf>
+</frameworkcontent>
+

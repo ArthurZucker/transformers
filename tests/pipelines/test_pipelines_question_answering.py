@@ -14,6 +14,8 @@
 
 import unittest
 
+from huggingface_hub import QuestionAnsweringOutputElement
+
 from transformers import (
     MODEL_FOR_QUESTION_ANSWERING_MAPPING,
     TF_MODEL_FOR_QUESTION_ANSWERING_MAPPING,
@@ -23,13 +25,19 @@ from transformers import (
 from transformers.data.processors.squad import SquadExample
 from transformers.pipelines import QuestionAnsweringArgumentHandler, pipeline
 from transformers.testing_utils import (
+    compare_pipeline_output_to_hub_spec,
     is_pipeline_test,
+    is_torch_available,
     nested_simplify,
     require_tf,
     require_torch,
     require_torch_or_tf,
     slow,
 )
+
+
+if is_torch_available():
+    import torch
 
 from .test_pipelines_common import ANY
 
@@ -43,19 +51,34 @@ class QAPipelineTests(unittest.TestCase):
     model_mapping = MODEL_FOR_QUESTION_ANSWERING_MAPPING
     tf_model_mapping = TF_MODEL_FOR_QUESTION_ANSWERING_MAPPING
 
-    if model_mapping is not None:
+    if not hasattr(model_mapping, "is_dummy"):
         model_mapping = {config: model for config, model in model_mapping.items() if config.__name__ not in _TO_SKIP}
-    if tf_model_mapping is not None:
+    if not hasattr(tf_model_mapping, "is_dummy"):
         tf_model_mapping = {
             config: model for config, model in tf_model_mapping.items() if config.__name__ not in _TO_SKIP
         }
 
-    def get_test_pipeline(self, model, tokenizer, processor):
+    def get_test_pipeline(
+        self,
+        model,
+        tokenizer=None,
+        image_processor=None,
+        feature_extractor=None,
+        processor=None,
+        torch_dtype="float32",
+    ):
         if isinstance(model.config, LxmertConfig):
             # This is an bimodal model, we need to find a more consistent way
             # to switch on those models.
             return None, None
-        question_answerer = QuestionAnsweringPipeline(model, tokenizer)
+        question_answerer = QuestionAnsweringPipeline(
+            model=model,
+            tokenizer=tokenizer,
+            feature_extractor=feature_extractor,
+            image_processor=image_processor,
+            processor=processor,
+            torch_dtype=torch_dtype,
+        )
 
         examples = [
             {"question": "Where was HuggingFace founded ?", "context": "HuggingFace was founded in Paris."},
@@ -117,6 +140,8 @@ class QAPipelineTests(unittest.TestCase):
         self.assertEqual(
             outputs, [{"answer": ANY(str), "start": ANY(int), "end": ANY(int), "score": ANY(float)} for i in range(20)]
         )
+        for single_output in outputs:
+            compare_pipeline_output_to_hub_spec(single_output, QuestionAnsweringOutputElement)
 
         # Very long context require multiple features
         outputs = question_answerer(
@@ -137,6 +162,34 @@ class QAPipelineTests(unittest.TestCase):
     def test_small_model_pt(self):
         question_answerer = pipeline(
             "question-answering", model="sshleifer/tiny-distilbert-base-cased-distilled-squad"
+        )
+
+        outputs = question_answerer(
+            question="Where was HuggingFace founded ?", context="HuggingFace was founded in Paris."
+        )
+
+        self.assertEqual(nested_simplify(outputs), {"score": 0.01, "start": 0, "end": 11, "answer": "HuggingFace"})
+
+    @require_torch
+    def test_small_model_pt_fp16(self):
+        question_answerer = pipeline(
+            "question-answering",
+            model="sshleifer/tiny-distilbert-base-cased-distilled-squad",
+            torch_dtype=torch.float16,
+        )
+
+        outputs = question_answerer(
+            question="Where was HuggingFace founded ?", context="HuggingFace was founded in Paris."
+        )
+
+        self.assertEqual(nested_simplify(outputs), {"score": 0.01, "start": 0, "end": 11, "answer": "HuggingFace"})
+
+    @require_torch
+    def test_small_model_pt_bf16(self):
+        question_answerer = pipeline(
+            "question-answering",
+            model="sshleifer/tiny-distilbert-base-cased-distilled-squad",
+            torch_dtype=torch.bfloat16,
         )
 
         outputs = question_answerer(
@@ -198,17 +251,14 @@ class QAPipelineTests(unittest.TestCase):
             "question-answering",
             model="KoichiYasuoka/deberta-base-japanese-aozora-ud-head",
         )
-        output = question_answerer(question="国語", context="全学年にわたって小学校の国語の教科書に挿し絵が用いられている")
+        output = question_answerer(question="国語", context="全学年にわたって小学校の国語の教科書に挿し絵が用いられている")  # fmt: skip
 
         # Wrong answer, the whole text is identified as one "word" since the tokenizer does not include
         # a pretokenizer
-        self.assertEqual(
-            nested_simplify(output),
-            {"score": 1.0, "start": 0, "end": 30, "answer": "全学年にわたって小学校の国語の教科書に挿し絵が用いられている"},
-        )
+        self.assertEqual(nested_simplify(output),{"score": 1.0, "start": 0, "end": 30, "answer": "全学年にわたって小学校の国語の教科書に挿し絵が用いられている"})  # fmt: skip
 
         # Disable word alignment
-        output = question_answerer(question="国語", context="全学年にわたって小学校の国語の教科書に挿し絵が用いられている", align_to_words=False)
+        output = question_answerer(question="国語", context="全学年にわたって小学校の国語の教科書に挿し絵が用いられている", align_to_words=False)  # fmt: skip
         self.assertEqual(
             nested_simplify(output),
             {"score": 1.0, "start": 15, "end": 18, "answer": "教科書"},
@@ -297,7 +347,7 @@ class QAPipelineTests(unittest.TestCase):
                     " Yes Bank a loss of ₹ 1,800 crore by extending credit facilities to Avantha Group, when it was"
                     " not eligible for the same"
                 ),
-                "question": "Is this person invovled in fraud?",
+                "question": "Is this person involved in fraud?",
             }
         )
         self.assertEqual(

@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # AltCLIP
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The AltCLIP model was proposed in [AltCLIP: Altering the Language Encoder in CLIP for Extended Language Capabilities](https://arxiv.org/abs/2211.06679v2) by Zhongzhi Chen, Guang Liu, Bo-Wen Zhang, Fulong Ye, Qinghong Yang, Ledell Wu. AltCLIP
@@ -31,7 +35,9 @@ teacher learning and contrastive learning. We validate our method through evalua
 performances on a bunch of tasks including ImageNet-CN, Flicker30k- CN, and COCO-CN. Further, we obtain very close performances with 
 CLIP on almost all tasks, suggesting that one can simply alter the text encoder in CLIP for extended capabilities such as multilingual understanding.*
 
-## Usage
+This model was contributed by [jongjyh](https://huggingface.co/jongjyh).
+
+## Usage tips and example
 
 The usage of AltCLIP is very similar to the CLIP. the difference between CLIP is the text encoder. Note that we use bidirectional attention instead of casual attention
 and we take the [CLS] token in XLM-R to represent text embedding.
@@ -49,7 +55,6 @@ The [`CLIPImageProcessor`] can be used to resize (or rescale) and normalize imag
 The [`AltCLIPProcessor`] wraps a [`CLIPImageProcessor`] and a [`XLMRobertaTokenizer`] into a single instance to both
 encode the text and prepare the images. The following example shows how to get the image-text similarity scores using
 [`AltCLIPProcessor`] and [`AltCLIPModel`].
-
 
 ```python
 >>> from PIL import Image
@@ -70,11 +75,11 @@ encode the text and prepare the images. The following example shows how to get t
 >>> probs = logits_per_image.softmax(dim=1)  # we can take the softmax to get the label probabilities
 ```
 
-Tips:
+<Tip>
 
-This model is build on `CLIPModel`, so use it like a original CLIP. 
+This model is based on `CLIPModel`, use it like you would use the original [CLIP](clip).
 
-This model was contributed by [jongjyh](https://huggingface.co/jongjyh).
+</Tip>
 
 ## AltCLIPConfig
 

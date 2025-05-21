@@ -1,4 +1,4 @@
-<!--Copyright 2022 The HuggingFace Team. All rights reserved.
+<!--Copyright 2024 The HuggingFace Team. All rights reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 the License. You may obtain a copy of the License at
@@ -13,46 +13,62 @@ rendered properly in your Markdown viewer.
 
 -->
 
-# Efficient Inference on CPU
+# CPU
 
-This guide focuses on inferencing large models efficiently on CPU.
+CPUs are a viable and cost-effective inference option. With a few optimization methods, it is possible to achieve good performance with large models on CPUs. These methods include fusing kernels to reduce overhead and compiling your code to a faster intermediate format that can be deployed in production environments.
 
-## `BetterTransformer` for faster inference
+This guide will show you a few ways to optimize inference on a CPU.
 
-We have recently integrated `BetterTransformer` for faster inference on CPU for text, image and audio models. Check the documentation about this integration [here](https://huggingface.co/docs/optimum/bettertransformer/overview) for more details.
+## Optimum
 
-## PyTorch JIT-mode (TorchScript)
-TorchScript is a way to create serializable and optimizable models from PyTorch code. Any TorchScript program can be saved from a Python process and loaded in a process where there is no Python dependency.
-Comparing to default eager mode, jit mode in PyTorch normally yields better performance for model inference from optimization methodologies like operator fusion.
+[Optimum](https://hf.co/docs/optimum/en/index) is a Hugging Face library focused on optimizing model performance across various hardware. It supports [ONNX Runtime](https://onnxruntime.ai/docs/) (ORT), a model accelerator, for a wide range of hardware and frameworks including CPUs.
 
-For a gentle introduction to TorchScript, see the Introduction to [PyTorch TorchScript tutorial](https://pytorch.org/tutorials/beginner/Intro_to_TorchScript_tutorial.html#tracing-modules).
+Optimum provides the [`~optimum.onnxruntime.ORTModel`] class for loading ONNX models. For example, load the [optimum/roberta-base-squad2](https://hf.co/optimum/roberta-base-squad2) checkpoint for question answering inference. This checkpoint contains a [model.onnx](https://hf.co/optimum/roberta-base-squad2/blob/main/model.onnx) file.
 
-### IPEX Graph Optimization with JIT-mode
-Intel® Extension for PyTorch provides further optimizations in jit mode for Transformers series models. It is highly recommended for users to take advantage of Intel® Extension for PyTorch with jit mode. Some frequently used operator patterns from Transformers models are already supported in Intel® Extension for PyTorch with jit mode fusions. Those fusion patterns like Multi-head-attention fusion, Concat Linear, Linear+Add, Linear+Gelu, Add+LayerNorm fusion and etc. are enabled and perform well. The benefit of the fusion is delivered to users in a transparent fashion. According to the analysis, ~70% of most popular NLP tasks in question-answering, text-classification, and token-classification can get performance benefits with these fusion patterns for both Float32 precision and BFloat16 Mixed precision.
+```py
+from transformers import AutoTokenizer, pipeline
+from optimum.onnxruntime import ORTModelForQuestionAnswering
 
-Check more detailed information for [IPEX Graph Optimization](https://intel.github.io/intel-extension-for-pytorch/cpu/latest/tutorials/features/graph_optimization.html).
+onnx_qa = pipeline("question-answering", model="optimum/roberta-base-squad2", tokenizer="deepset/roberta-base-squad2")
 
-#### IPEX installation:
+question = "What's my name?"
+context = "My name is Philipp and I live in Nuremberg."
+pred = onnx_qa(question, context)
+```
 
-IPEX release is following PyTorch, check the approaches for [IPEX installation](https://intel.github.io/intel-extension-for-pytorch/).
+> [!TIP]
+> Optimum includes an [Intel](https://hf.co/docs/optimum/intel/index) extension that provides additional optimizations such as quantization, pruning, and knowledge distillation for Intel CPUs. This extension also includes tools to convert models to [OpenVINO](https://hf.co/docs/optimum/intel/inference), a toolkit for optimizing and deploying models, for even faster inference.
 
-### Usage of JIT-mode
-To enable JIT-mode in Trainer for evaluaion or prediction, users should add `jit_mode_eval` in Trainer command arguments.
+### BetterTransformer
 
-<Tip warning={true}>
+[BetterTransformer](https://pytorch.org/blog/a-better-transformer-for-fast-transformer-encoder-inference/) is a *fastpath* execution of specialized Transformers functions directly on the hardware level such as a CPU. There are two main components of the fastpath execution.
 
-for PyTorch >= 1.14.0. JIT-mode could benefit any models for prediction and evaluaion since dict input is supported in jit.trace
+- fusing multiple operations into a single kernel for faster and more efficient execution
+- skipping unnecessary computation of padding tokens with nested tensors
 
-for PyTorch < 1.14.0. JIT-mode could benefit models whose forward parameter order matches the tuple input order in jit.trace, like question-answering model
-In the case where the forward parameter order does not match the tuple input order in jit.trace, like text-classification models, jit.trace will fail and we are capturing this with the exception here to make it fallback. Logging is used to notify users.
+> [!WARNING]
+> BetterTransformer isn't supported for all models. Check this [list](https://hf.co/docs/optimum/bettertransformer/overview#supported-models) to see whether a model supports BetterTransformer.
 
-</Tip>
+BetterTransformer is available through Optimum with [`~PreTrainedModel.to_bettertransformer`].
 
-Take an example of the use cases on [Transformers question-answering](https://github.com/huggingface/transformers/tree/main/examples/pytorch/question-answering)
+```py
+from transformers import AutoModelForCausalLM
 
+model = AutoModelForCausalLM.from_pretrained("bigscience/bloom")
+model = model.to_bettertransformer()
+```
 
-- Inference using jit mode on CPU:
-<pre>python run_qa.py \
+## TorchScript
+
+[TorchScript](https://pytorch.org/docs/stable/jit.html) is an intermediate PyTorch model format that can be run in non-Python environments, like C++, where performance is critical. Train a PyTorch model and convert it to a TorchScript function or module with [torch.jit.trace](https://pytorch.org/docs/stable/generated/torch.jit.trace.html). This function optimizes the model with just-in-time (JIT) compilation, and compared to the default eager mode, JIT-compiled models offer better inference performance.
+
+> [!TIP]
+> Refer to the [Introduction to PyTorch TorchScript](https://pytorch.org/tutorials/beginner/Intro_to_TorchScript_tutorial.html) tutorial for a gentle introduction to TorchScript.
+
+On a CPU, enable `torch.jit.trace` with the `--jit_mode_eval` flag in [`Trainer`].
+
+```bash
+python examples/pytorch/question-answering/run_qa.py \
 --model_name_or_path csarron/bert-base-uncased-squad-v1 \
 --dataset_name squad \
 --do_eval \
@@ -60,10 +76,21 @@ Take an example of the use cases on [Transformers question-answering](https://gi
 --doc_stride 128 \
 --output_dir /tmp/ \
 --no_cuda \
-<b>--jit_mode_eval </b></pre> 
+--jit_mode_eval
+```
 
-- Inference with IPEX using jit mode on CPU:
-<pre>python run_qa.py \
+## IPEX
+
+[Intel Extension for PyTorch](https://intel.github.io/intel-extension-for-pytorch/cpu/latest/tutorials/getting_started.html) (IPEX) offers additional optimizations for PyTorch on Intel CPUs. IPEX further optimizes TorchScript with [graph optimization](https://intel.github.io/intel-extension-for-pytorch/cpu/latest/tutorials/features/graph_optimization.html) which fuses operations like Multi-head attention, Concat Linear, Linear + Add, Linear + Gelu, Add + LayerNorm, and more, into single kernels for faster execution.
+
+Make sure IPEX is installed, and set the `--use_opex` and `--jit_mode_eval` flags in [`Trainer`] to enable IPEX graph optimization and TorchScript.
+
+```bash
+!pip install intel_extension_for_pytorch
+```
+
+```bash
+python examples/pytorch/question-answering/run_qa.py \
 --model_name_or_path csarron/bert-base-uncased-squad-v1 \
 --dataset_name squad \
 --do_eval \
@@ -71,5 +98,6 @@ Take an example of the use cases on [Transformers question-answering](https://gi
 --doc_stride 128 \
 --output_dir /tmp/ \
 --no_cuda \
-<b>--use_ipex \</b>
-<b>--jit_mode_eval</b></pre> 
+--use_ipex \
+--jit_mode_eval
+```

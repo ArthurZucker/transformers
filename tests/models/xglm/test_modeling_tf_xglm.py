@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2022 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +28,6 @@ if is_tf_available():
     import tensorflow as tf
 
     from transformers.models.xglm.modeling_tf_xglm import (
-        TF_XGLM_PRETRAINED_MODEL_ARCHIVE_LIST,
         TFXGLMForCausalLM,
         TFXGLMModel,
     )
@@ -161,9 +159,9 @@ class TFXGLMModelTest(TFModelTesterMixin, PipelineTesterMixin, unittest.TestCase
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in TF_XGLM_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = TFXGLMModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "facebook/xglm-564M"
+        model = TFXGLMModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
     @unittest.skip(reason="Currently, model embeddings are going to undergo a major refactor.")
     def test_resize_token_embeddings(self):
@@ -177,9 +175,7 @@ class TFXGLMModelLanguageGenerationTest(unittest.TestCase):
         model = TFXGLMForCausalLM.from_pretrained("facebook/xglm-564M")
         input_ids = tf.convert_to_tensor([[2, 268, 9865]], dtype=tf.int32)  # The dog
         # </s> The dog is a very friendly dog. He is very affectionate and loves to play with other
-        # fmt: off
-        expected_output_ids = [2, 268, 9865, 67, 11, 1988, 57252, 9865, 5, 984, 67, 1988, 213838, 1658, 53, 70446, 33, 6657, 278, 1581]
-        # fmt: on
+        expected_output_ids = [2, 268, 9865, 67, 11, 1988, 57252, 9865, 5, 984, 67, 1988, 213838, 1658, 53, 70446, 33, 6657, 278, 1581]  # fmt: skip
         output_ids = model.generate(input_ids, do_sample=False, num_beams=1)
         if verify_outputs:
             self.assertListEqual(output_ids[0].numpy().tolist(), expected_output_ids)
@@ -211,7 +207,7 @@ class TFXGLMModelLanguageGenerationTest(unittest.TestCase):
 
         # use different length sentences to test batching
         sentences = [
-            "This is an extremelly long sentence that only exists to test the ability of the model to cope with "
+            "This is an extremely long sentence that only exists to test the ability of the model to cope with "
             "left-padding, such as in batched generation. The output for the sequence below should be the same "
             "regardless of whether left padding is applied or not. When",
             "Hello, my dog is a little",
@@ -233,7 +229,7 @@ class TFXGLMModelLanguageGenerationTest(unittest.TestCase):
         padded_sentence = tokenizer.decode(output_padded[0], skip_special_tokens=True)
 
         expected_output_sentence = [
-            "This is an extremelly long sentence that only exists to test the ability of the model to cope with "
+            "This is an extremely long sentence that only exists to test the ability of the model to cope with "
             "left-padding, such as in batched generation. The output for the sequence below should be the same "
             "regardless of whether left padding is applied or not. When left padding is applied, the sequence will be "
             "a single",
@@ -241,3 +237,23 @@ class TFXGLMModelLanguageGenerationTest(unittest.TestCase):
         ]
         self.assertListEqual(expected_output_sentence, batch_out_sentence)
         self.assertListEqual(expected_output_sentence, [non_padded_sentence, padded_sentence])
+
+    @slow
+    def test_loss_with_padding(self):
+        tokenizer = XGLMTokenizer.from_pretrained("facebook/xglm-564M")
+        model = TFXGLMForCausalLM.from_pretrained("facebook/xglm-564M")
+
+        tokenizer.padding_side = "right"
+
+        sequence = "Sequence"
+
+        tokenized_non_padded = tokenizer(sequence, return_tensors="tf")
+        labels_non_padded = tokenized_non_padded.input_ids
+        loss_non_padded = model(tokenized_non_padded, labels=labels_non_padded).loss
+
+        tokenized_padded = tokenizer(sequence, padding="max_length", max_length=16, return_tensors="tf")
+        labels_padded = tokenized_padded.input_ids
+        labels_padded = tf.where(labels_padded == tokenizer.pad_token_id, -100, labels_padded)
+        loss_padded = model(tokenized_padded, labels=labels_padded).loss
+
+        tf.debugging.assert_near(loss_non_padded, loss_padded, atol=1e-3)

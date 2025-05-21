@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # MRA
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The MRA model was proposed in [Multi Resolution Analysis (MRA) for Approximate Self-Attention](https://arxiv.org/abs/2207.10284) by Zhanpeng Zeng, Sourav Pal, Jeffery Kline, Glenn M Fung, and Vikas Singh.
@@ -27,23 +31,19 @@ The abstract from the paper is the following:
 This model was contributed by [novice03](https://huggingface.co/novice03).
 The original code can be found [here](https://github.com/mlpen/mra-attention).
 
-
 ## MraConfig
 
 [[autodoc]] MraConfig
-
 
 ## MraModel
 
 [[autodoc]] MraModel
     - forward
 
-
 ## MraForMaskedLM
 
 [[autodoc]] MraForMaskedLM
     - forward
-
 
 ## MraForSequenceClassification
 
@@ -55,12 +55,10 @@ The original code can be found [here](https://github.com/mlpen/mra-attention).
 [[autodoc]] MraForMultipleChoice
     - forward
 
-
 ## MraForTokenClassification
 
 [[autodoc]] MraForTokenClassification
     - forward
-
 
 ## MraForQuestionAnswering
 

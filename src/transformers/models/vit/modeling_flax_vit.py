@@ -38,9 +38,10 @@ VIT_START_DOCSTRING = r"""
     This model inherits from [`FlaxPreTrainedModel`]. Check the superclass documentation for the generic methods the
     library implements for all its model (such as downloading, saving and converting weights from PyTorch models)
 
-    This model is also a Flax Linen [flax.linen.Module](https://flax.readthedocs.io/en/latest/flax.linen.html#module)
-    subclass. Use it as a regular Flax linen Module and refer to the Flax documentation for all matter related to
-    general usage and behavior.
+    This model is also a
+    [flax.linen.Module](https://flax.readthedocs.io/en/latest/api_reference/flax.linen/module.html) subclass. Use it as
+    a regular Flax linen Module and refer to the Flax documentation for all matter related to general usage and
+    behavior.
 
     Finally, this model supports inherent JAX features such as:
 
@@ -411,17 +412,18 @@ class FlaxViTPooler(nn.Module):
 
     def setup(self):
         self.dense = nn.Dense(
-            self.config.hidden_size,
+            self.config.pooler_output_size,
             kernel_init=jax.nn.initializers.variance_scaling(
                 self.config.initializer_range**2, "fan_in", "truncated_normal"
             ),
             dtype=self.dtype,
         )
+        self.activation = ACT2FN[self.config.pooler_act]
 
     def __call__(self, hidden_states):
         cls_hidden_state = hidden_states[:, 0]
         cls_hidden_state = self.dense(cls_hidden_state)
-        return nn.tanh(cls_hidden_state)
+        return self.activation(cls_hidden_state)
 
 
 class FlaxViTPreTrainedModel(FlaxPreTrainedModel):
@@ -472,7 +474,7 @@ class FlaxViTPreTrainedModel(FlaxPreTrainedModel):
     def __call__(
         self,
         pixel_values,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: jax.random.PRNGKey = None,
         train: bool = False,
         output_attentions: Optional[bool] = None,
@@ -670,3 +672,6 @@ overwrite_call_docstring(FlaxViTForImageClassification, FLAX_VISION_CLASSIF_DOCS
 append_replace_return_docstrings(
     FlaxViTForImageClassification, output_type=FlaxSequenceClassifierOutput, config_class=ViTConfig
 )
+
+
+__all__ = ["FlaxViTForImageClassification", "FlaxViTModel", "FlaxViTPreTrainedModel"]

@@ -52,7 +52,7 @@ from .configuration_bert import BertConfig
 
 logger = logging.get_logger(__name__)
 
-_CHECKPOINT_FOR_DOC = "bert-base-uncased"
+_CHECKPOINT_FOR_DOC = "google-bert/bert-base-uncased"
 _CONFIG_FOR_DOC = "BertConfig"
 
 remat = nn_partitioning.remat
@@ -93,9 +93,10 @@ BERT_START_DOCSTRING = r"""
     This model inherits from [`FlaxPreTrainedModel`]. Check the superclass documentation for the generic methods the
     library implements for all its model (such as downloading, saving and converting weights from PyTorch models)
 
-    This model is also a Flax Linen [flax.linen.Module](https://flax.readthedocs.io/en/latest/flax.linen.html#module)
-    subclass. Use it as a regular Flax linen Module and refer to the Flax documentation for all matter related to
-    general usage and behavior.
+    This model is also a
+    [flax.linen.Module](https://flax.readthedocs.io/en/latest/api_reference/flax.linen/module.html) subclass. Use it as
+    a regular Flax linen Module and refer to the Flax documentation for all matter related to general usage and
+    behavior.
 
     Finally, this model supports inherent JAX features such as:
 
@@ -262,7 +263,7 @@ class FlaxBertSelfAttention(nn.Module):
     def _concatenate_to_cache(self, key, value, query, attention_mask):
         """
         This function takes projected key, value states from a single input token and concatenates the states to cached
-        states from previous steps. This function is slighly adapted from the official Flax repository:
+        states from previous steps. This function is slightly adapted from the official Flax repository:
         https://github.com/google/flax/blob/491ce18759622506588784b4fca0e4bf05f8c8cd/flax/linen/attention.py#L252
         """
         # detect if we're initializing by absence of existing cache data.
@@ -863,13 +864,13 @@ class FlaxBertPreTrainedModel(FlaxPreTrainedModel):
         head_mask=None,
         encoder_hidden_states=None,
         encoder_attention_mask=None,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: jax.random.PRNGKey = None,
         train: bool = False,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        past_key_values: dict = None,
+        past_key_values: Optional[dict] = None,
     ):
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -1113,8 +1114,8 @@ FLAX_BERT_FOR_PRETRAINING_DOCSTRING = """
     ```python
     >>> from transformers import AutoTokenizer, FlaxBertForPreTraining
 
-    >>> tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-    >>> model = FlaxBertForPreTraining.from_pretrained("bert-base-uncased")
+    >>> tokenizer = AutoTokenizer.from_pretrained("google-bert/bert-base-uncased")
+    >>> model = FlaxBertForPreTraining.from_pretrained("google-bert/bert-base-uncased")
 
     >>> inputs = tokenizer("Hello, my dog is cute", return_tensors="np")
     >>> outputs = model(**inputs)
@@ -1268,8 +1269,8 @@ FLAX_BERT_FOR_NEXT_SENT_PRED_DOCSTRING = """
     ```python
     >>> from transformers import AutoTokenizer, FlaxBertForNextSentencePrediction
 
-    >>> tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-    >>> model = FlaxBertForNextSentencePrediction.from_pretrained("bert-base-uncased")
+    >>> tokenizer = AutoTokenizer.from_pretrained("google-bert/bert-base-uncased")
+    >>> model = FlaxBertForNextSentencePrediction.from_pretrained("google-bert/bert-base-uncased")
 
     >>> prompt = "In Italy, pizza served in formal settings, such as at a restaurant, is presented unsliced."
     >>> next_sentence = "The sky is blue due to the shorter wavelength of blue light."
@@ -1568,7 +1569,7 @@ class FlaxBertForQuestionAnsweringModule(nn.Module):
         hidden_states = outputs[0]
 
         logits = self.qa_outputs(hidden_states)
-        start_logits, end_logits = logits.split(self.config.num_labels, axis=-1)
+        start_logits, end_logits = jnp.split(logits, self.config.num_labels, axis=-1)
         start_logits = start_logits.squeeze(-1)
         end_logits = end_logits.squeeze(-1)
 
@@ -1710,3 +1711,17 @@ append_call_sample_docstring(
     FlaxCausalLMOutputWithCrossAttentions,
     _CONFIG_FOR_DOC,
 )
+
+
+__all__ = [
+    "FlaxBertForCausalLM",
+    "FlaxBertForMaskedLM",
+    "FlaxBertForMultipleChoice",
+    "FlaxBertForNextSentencePrediction",
+    "FlaxBertForPreTraining",
+    "FlaxBertForQuestionAnswering",
+    "FlaxBertForSequenceClassification",
+    "FlaxBertForTokenClassification",
+    "FlaxBertModel",
+    "FlaxBertPreTrainedModel",
+]

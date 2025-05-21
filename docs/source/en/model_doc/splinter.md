@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # Splinter
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The Splinter model was proposed in [Few-Shot Question Answering by Pretraining Span Selection](https://arxiv.org/abs/2101.00438) by Ori Ram, Yuval Kirstain, Jonathan Berant, Amir Globerson, Omer Levy. Splinter
@@ -34,7 +38,9 @@ are replaced with a special token, viewed as a question representation, that is 
 the answer span. The resulting model obtains surprisingly good results on multiple benchmarks (e.g., 72.7 F1 on SQuAD
 with only 128 training examples), while maintaining competitive performance in the high-resource setting.
 
-Tips:
+This model was contributed by [yuvalkirstain](https://huggingface.co/yuvalkirstain) and [oriram](https://huggingface.co/oriram). The original code can be found [here](https://github.com/oriram/splinter).
+
+## Usage tips
 
 - Splinter was trained to predict answers spans conditioned on a special [QUESTION] token. These tokens contextualize
   to question representations which are used to predict the answers. This layer is called QASS, and is the default
@@ -49,9 +55,7 @@ Tips:
   doesn't (*tau/splinter-base* and *tau/splinter-large*). This is done to support randomly initializing this layer at
   fine-tuning, as it is shown to yield better results for some cases in the paper.
 
-This model was contributed by [yuvalkirstain](https://huggingface.co/yuvalkirstain) and [oriram](https://huggingface.co/oriram). The original code can be found [here](https://github.com/oriram/splinter).
-
-## Documentation resources
+## Resources
 
 - [Question answering task guide](../tasks/question-answering)
 

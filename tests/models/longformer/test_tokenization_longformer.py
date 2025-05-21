@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2022 Tsimur Hadeliya. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,30 +11,34 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Testing suite for the Longformer tokenizer. """
-
+"""Testing suite for the Longformer tokenizer."""
 
 import itertools
 import json
 import os
 import unittest
+from functools import lru_cache
 
 from transformers import AddedToken, LongformerTokenizer, LongformerTokenizerFast
 from transformers.models.longformer.tokenization_longformer import VOCAB_FILES_NAMES
 from transformers.testing_utils import require_tokenizers, slow
 
-from ...test_tokenization_common import TokenizerTesterMixin
+from ...test_tokenization_common import TokenizerTesterMixin, use_cache_if_possible
 
 
 @require_tokenizers
+# Copied from tests.models.roberta.test_tokenization_roberta.RobertaTokenizationTest with FacebookAI/roberta-base->allenai/longformer-base-4096,Roberta->Longformer,roberta->longformer,
 class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
+    from_pretrained_id = "allenai/longformer-base-4096"
+    # Ignore copy
     tokenizer_class = LongformerTokenizer
     test_slow_tokenizer = True
     rust_tokenizer_class = LongformerTokenizerFast
     test_rust_tokenizer = True
 
-    def setUp(self):
-        super().setUp()
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
 
         # Adapted from Sennrich et al. 2015 and https://github.com/rsennrich/subword-nmt
         vocab = [
@@ -62,32 +65,36 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
         ]
         vocab_tokens = dict(zip(vocab, range(len(vocab))))
         merges = ["#version: 0.2", "\u0120 l", "\u0120l o", "\u0120lo w", "e r", ""]
-        self.special_tokens_map = {"unk_token": "<unk>"}
+        cls.special_tokens_map = {"unk_token": "<unk>"}
 
-        self.vocab_file = os.path.join(self.tmpdirname, VOCAB_FILES_NAMES["vocab_file"])
-        self.merges_file = os.path.join(self.tmpdirname, VOCAB_FILES_NAMES["merges_file"])
-        with open(self.vocab_file, "w", encoding="utf-8") as fp:
+        cls.vocab_file = os.path.join(cls.tmpdirname, VOCAB_FILES_NAMES["vocab_file"])
+        cls.merges_file = os.path.join(cls.tmpdirname, VOCAB_FILES_NAMES["merges_file"])
+        with open(cls.vocab_file, "w", encoding="utf-8") as fp:
             fp.write(json.dumps(vocab_tokens) + "\n")
-        with open(self.merges_file, "w", encoding="utf-8") as fp:
+        with open(cls.merges_file, "w", encoding="utf-8") as fp:
             fp.write("\n".join(merges))
 
-    # Copied from tests.models.roberta.test_tokenization_roberta.RobertaTokenizationTest.get_tokenizer
-    def get_tokenizer(self, **kwargs):
-        kwargs.update(self.special_tokens_map)
-        return self.tokenizer_class.from_pretrained(self.tmpdirname, **kwargs)
+    @classmethod
+    @use_cache_if_possible
+    @lru_cache(maxsize=64)
+    def get_tokenizer(cls, pretrained_name=None, **kwargs):
+        kwargs.update(cls.special_tokens_map)
+        pretrained_name = pretrained_name or cls.tmpdirname
+        return cls.tokenizer_class.from_pretrained(pretrained_name, **kwargs)
 
-    # Copied from tests.models.roberta.test_tokenization_roberta.RobertaTokenizationTest.get_rust_tokenizer
-    def get_rust_tokenizer(self, **kwargs):
-        kwargs.update(self.special_tokens_map)
-        return self.rust_tokenizer_class.from_pretrained(self.tmpdirname, **kwargs)
+    @classmethod
+    @use_cache_if_possible
+    @lru_cache(maxsize=64)
+    def get_rust_tokenizer(cls, pretrained_name=None, **kwargs):
+        kwargs.update(cls.special_tokens_map)
+        pretrained_name = pretrained_name or cls.tmpdirname
+        return cls.rust_tokenizer_class.from_pretrained(pretrained_name, **kwargs)
 
-    # Copied from tests.models.roberta.test_tokenization_roberta.RobertaTokenizationTest.get_input_output_texts
     def get_input_output_texts(self, tokenizer):
         input_text = "lower newer"
         output_text = "lower newer"
         return input_text, output_text
 
-    # Copied from tests.models.roberta.test_tokenization_roberta.RobertaTokenizationTest.test_full_tokenizer
     def test_full_tokenizer(self):
         tokenizer = self.tokenizer_class(self.vocab_file, self.merges_file, **self.special_tokens_map)
         text = "lower newer"
@@ -99,7 +106,6 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
         input_bpe_tokens = [0, 1, 2, 15, 10, 9, 3, 2, 15, 19]
         self.assertListEqual(tokenizer.convert_tokens_to_ids(input_tokens), input_bpe_tokens)
 
-    # Copied from tests.models.roberta.test_tokenization_roberta.RobertaTokenizationTest.roberta_dict_integration_testing with roberta->longformer
     def longformer_dict_integration_testing(self):
         tokenizer = self.get_tokenizer()
 
@@ -110,7 +116,6 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
         )
 
     @slow
-    # Copied from tests.models.roberta.test_tokenization_roberta.RobertaTokenizationTest.test_sequence_builders with roberta-base->allenai/longformer-base-4096
     def test_sequence_builders(self):
         tokenizer = self.tokenizer_class.from_pretrained("allenai/longformer-base-4096")
 
@@ -130,12 +135,11 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
         assert encoded_sentence == encoded_text_from_decode
         assert encoded_pair == encoded_pair_from_decode
 
-    # Copied from tests.models.roberta.test_tokenization_roberta.RobertaTokenizationTest.test_space_encoding
     def test_space_encoding(self):
         tokenizer = self.get_tokenizer()
 
         sequence = "Encode this sequence."
-        space_encoding = tokenizer.byte_encoder[" ".encode("utf-8")[0]]
+        space_encoding = tokenizer.byte_encoder[b" "[0]]
 
         # Testing encoder arguments
         encoded = tokenizer.encode(sequence, add_special_tokens=False, add_prefix_space=False)
@@ -171,16 +175,15 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
         first_char = tokenizer.convert_ids_to_tokens(encoded[mask_loc + 1])[0]
         self.assertNotEqual(first_char, space_encoding)
 
-    # Copied from tests.models.roberta.test_tokenization_roberta.RobertaTokenizationTest.test_pretokenized_inputs
+    @unittest.skip
     def test_pretokenized_inputs(self):
         pass
 
-    # Copied from tests.models.roberta.test_tokenization_roberta.RobertaTokenizationTest.test_embeded_special_tokens
     def test_embeded_special_tokens(self):
         for tokenizer, pretrained_name, kwargs in self.tokenizers_list:
             with self.subTest(f"{tokenizer.__class__.__name__} ({pretrained_name})"):
-                tokenizer_r = self.rust_tokenizer_class.from_pretrained(pretrained_name, **kwargs)
-                tokenizer_p = self.tokenizer_class.from_pretrained(pretrained_name, **kwargs)
+                tokenizer_r = self.get_rust_tokenizer(pretrained_name, **kwargs)
+                tokenizer_p = self.get_tokenizer(pretrained_name, **kwargs)
                 sentence = "A, <mask> AllenNLP sentence."
                 tokens_r = tokenizer_r.encode_plus(sentence, add_special_tokens=True, return_token_type_ids=True)
                 tokens_p = tokenizer_p.encode_plus(sentence, add_special_tokens=True, return_token_type_ids=True)
@@ -197,7 +200,7 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
                 tokens_r_str = tokenizer_r.convert_ids_to_tokens(tokens_r["input_ids"])
                 tokens_p_str = tokenizer_p.convert_ids_to_tokens(tokens_p["input_ids"])
 
-                # Rust correctly handles the space before the mask while python doesnt
+                # Rust correctly handles the space before the mask while python doesn't
                 self.assertSequenceEqual(tokens_p["input_ids"], [0, 250, 6, 50264, 3823, 487, 21992, 3645, 4, 2])
                 self.assertSequenceEqual(tokens_r["input_ids"], [0, 250, 6, 50264, 3823, 487, 21992, 3645, 4, 2])
 
@@ -208,10 +211,9 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
                     tokens_r_str, ["<s>", "A", ",", "<mask>", "ĠAllen", "N", "LP", "Ġsentence", ".", "</s>"]
                 )
 
-    # Copied from tests.models.roberta.test_tokenization_roberta.RobertaTokenizationTest.test_change_add_prefix_space_and_trim_offsets_args
     def test_change_add_prefix_space_and_trim_offsets_args(self):
         for trim_offsets, add_prefix_space in itertools.product([True, False], repeat=2):
-            tokenizer_r = self.rust_tokenizer_class.from_pretrained(
+            tokenizer_r = self.get_rust_tokenizer(
                 self.tmpdirname, use_fast=True, add_prefix_space=add_prefix_space, trim_offsets=trim_offsets
             )
 
@@ -223,7 +225,6 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
             self.assertEqual(post_processor_state["add_prefix_space"], add_prefix_space)
             self.assertEqual(post_processor_state["trim_offsets"], trim_offsets)
 
-    # Copied from tests.models.roberta.test_tokenization_roberta.RobertaTokenizationTest.test_offsets_mapping_with_different_add_prefix_space_and_trim_space_arguments
     def test_offsets_mapping_with_different_add_prefix_space_and_trim_space_arguments(self):
         # Test which aims to verify that the offsets are well adapted to the argument `add_prefix_space` and
         # `trim_offsets`
@@ -232,7 +233,7 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
                 text_of_1_token = "hello"  # `hello` is a token in the vocabulary of `pretrained_name`
                 text = f"{text_of_1_token} {text_of_1_token}"
 
-                tokenizer_r = self.rust_tokenizer_class.from_pretrained(
+                tokenizer_r = self.get_rust_tokenizer(
                     pretrained_name, use_fast=True, add_prefix_space=True, trim_offsets=True
                 )
                 encoding = tokenizer_r(text, return_offsets_mapping=True, add_special_tokens=False)
@@ -242,7 +243,7 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
                     (len(text_of_1_token) + 1, len(text_of_1_token) + 1 + len(text_of_1_token)),
                 )
 
-                tokenizer_r = self.rust_tokenizer_class.from_pretrained(
+                tokenizer_r = self.get_rust_tokenizer(
                     pretrained_name, use_fast=True, add_prefix_space=False, trim_offsets=True
                 )
                 encoding = tokenizer_r(text, return_offsets_mapping=True, add_special_tokens=False)
@@ -252,7 +253,7 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
                     (len(text_of_1_token) + 1, len(text_of_1_token) + 1 + len(text_of_1_token)),
                 )
 
-                tokenizer_r = self.rust_tokenizer_class.from_pretrained(
+                tokenizer_r = self.get_rust_tokenizer(
                     pretrained_name, use_fast=True, add_prefix_space=True, trim_offsets=False
                 )
                 encoding = tokenizer_r(text, return_offsets_mapping=True, add_special_tokens=False)
@@ -262,7 +263,7 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
                     (len(text_of_1_token), len(text_of_1_token) + 1 + len(text_of_1_token)),
                 )
 
-                tokenizer_r = self.rust_tokenizer_class.from_pretrained(
+                tokenizer_r = self.get_rust_tokenizer(
                     pretrained_name, use_fast=True, add_prefix_space=False, trim_offsets=False
                 )
                 encoding = tokenizer_r(text, return_offsets_mapping=True, add_special_tokens=False)
@@ -284,7 +285,7 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
                 #     (1 + len(text_of_1_token) + 1, 1 + len(text_of_1_token) + 1 + len(text_of_1_token)),
                 # )
 
-                tokenizer_r = self.rust_tokenizer_class.from_pretrained(
+                tokenizer_r = self.get_rust_tokenizer(
                     pretrained_name, use_fast=True, add_prefix_space=False, trim_offsets=True
                 )
                 encoding = tokenizer_r(text, return_offsets_mapping=True, add_special_tokens=False)
@@ -294,7 +295,7 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
                     (1 + len(text_of_1_token) + 1, 1 + len(text_of_1_token) + 1 + len(text_of_1_token)),
                 )
 
-                tokenizer_r = self.rust_tokenizer_class.from_pretrained(
+                tokenizer_r = self.get_rust_tokenizer(
                     pretrained_name, use_fast=True, add_prefix_space=True, trim_offsets=False
                 )
                 encoding = tokenizer_r(text, return_offsets_mapping=True, add_special_tokens=False)
@@ -304,7 +305,7 @@ class LongformerTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
                     (1 + len(text_of_1_token), 1 + len(text_of_1_token) + 1 + len(text_of_1_token)),
                 )
 
-                tokenizer_r = self.rust_tokenizer_class.from_pretrained(
+                tokenizer_r = self.get_rust_tokenizer(
                     pretrained_name, use_fast=True, add_prefix_space=False, trim_offsets=False
                 )
                 encoding = tokenizer_r(text, return_offsets_mapping=True, add_special_tokens=False)

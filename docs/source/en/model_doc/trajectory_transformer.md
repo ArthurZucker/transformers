@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # Trajectory Transformer
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 <Tip warning={true}>
 
 This model is in maintenance mode only, so we won't accept any new PRs changing its code.
@@ -43,18 +47,17 @@ in offline RL algorithms. We demonstrate the flexibility of this approach across
 imitation learning, goal-conditioned RL, and offline RL. Further, we show that this approach can be combined with
 existing model-free algorithms to yield a state-of-the-art planner in sparse-reward, long-horizon tasks.*
 
-Tips:
+This model was contributed by [CarlCochet](https://huggingface.co/CarlCochet). The original code can be found [here](https://github.com/jannerm/trajectory-transformer).
+
+## Usage tips
 
 This Transformer is used for deep reinforcement learning. To use it, you need to create sequences from
 actions, states and rewards from all previous timesteps. This model will treat all these elements together
 as one big sequence (a trajectory).
 
-This model was contributed by [CarlCochet](https://huggingface.co/CarlCochet). The original code can be found [here](https://github.com/jannerm/trajectory-transformer).
-
 ## TrajectoryTransformerConfig
 
 [[autodoc]] TrajectoryTransformerConfig
-
 
 ## TrajectoryTransformerModel
 

@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # LayoutLMV2
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The LayoutLMV2 model was proposed in [LayoutLMv2: Multi-modal Pre-training for Visually-Rich Document Understanding](https://arxiv.org/abs/2012.14740) by Yang Xu, Yiheng Xu, Tengchao Lv, Lei Cui, Furu Wei, Guoxin Wang, Yijuan Lu,
@@ -50,13 +54,13 @@ this https URL.*
 
 LayoutLMv2 depends on `detectron2`, `torchvision` and `tesseract`. Run the
 following to install them:
-```
+```bash
 python -m pip install 'git+https://github.com/facebookresearch/detectron2.git'
 python -m pip install torchvision tesseract
 ```
 (If you are developing for LayoutLMv2, note that passing the doctests also requires the installation of these packages.)
 
-Tips:
+## Usage tips
 
 - The main difference between LayoutLMv1 and LayoutLMv2 is that the latter incorporates visual embeddings during
   pre-training (while LayoutLMv1 only adds visual embeddings during fine-tuning).
@@ -304,6 +308,11 @@ print(encoding.keys())
 ## LayoutLMv2ImageProcessor
 
 [[autodoc]] LayoutLMv2ImageProcessor
+    - preprocess
+
+## LayoutLMv2ImageProcessorFast
+
+[[autodoc]] LayoutLMv2ImageProcessorFast
     - preprocess
 
 ## LayoutLMv2Tokenizer

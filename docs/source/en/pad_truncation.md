@@ -18,7 +18,7 @@ rendered properly in your Markdown viewer.
 
 Batched inputs are often different lengths, so they can't be converted to fixed-size tensors. Padding and truncation are strategies for dealing with this problem, to create rectangular tensors from batches of varying lengths. Padding adds a special **padding token** to ensure shorter sequences will have the same length as either the longest sequence in a batch or the maximum length accepted by the model. Truncation works in the other direction by truncating long sequences.
 
-In most cases, padding your batch to the length of the longest sequence and truncating to the maximum length a model can accept works pretty well. However, the API supports more strategies if you need them. The three arguments you need to are: `padding`, `truncation` and `max_length`.
+In most cases, padding your batch to the length of the longest sequence and truncating to the maximum length a model can accept works pretty well. However, the API supports more strategies if you need them. The three arguments you need to know are: `padding`, `truncation` and `max_length`.
 
 The `padding` argument controls padding. It can be a boolean or a string:
 
@@ -54,7 +54,7 @@ The following table summarizes the recommended way to setup padding and truncati
 |                                      |                                   | `tokenizer(batch_sentences, padding='longest')`                                        |
 |                                      | padding to max model input length | `tokenizer(batch_sentences, padding='max_length')`                                     |
 |                                      | padding to specific length        | `tokenizer(batch_sentences, padding='max_length', max_length=42)`                      |
-|                                      | padding to a multiple of a value  | `tokenizer(batch_sentences, padding=True, pad_to_multiple_of=8)                        |
+|                                      | padding to a multiple of a value  | `tokenizer(batch_sentences, padding=True, pad_to_multiple_of=8)`                        |
 | truncation to max model input length | no padding                        | `tokenizer(batch_sentences, truncation=True)` or                                       |
 |                                      |                                   | `tokenizer(batch_sentences, truncation=STRATEGY)`                                      |
 |                                      | padding to max sequence in batch  | `tokenizer(batch_sentences, padding=True, truncation=True)` or                         |

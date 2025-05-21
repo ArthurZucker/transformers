@@ -37,6 +37,7 @@ class ViltProcessor(ProcessorMixin):
         tokenizer (`BertTokenizerFast`, *optional*):
             An instance of ['BertTokenizerFast`]. The tokenizer is a required input.
     """
+
     attributes = ["image_processor", "tokenizer"]
     image_processor_class = "ViltImageProcessor"
     tokenizer_class = ("BertTokenizer", "BertTokenizerFast")
@@ -145,3 +146,6 @@ class ViltProcessor(ProcessorMixin):
             FutureWarning,
         )
         return self.image_processor
+
+
+__all__ = ["ViltProcessor"]

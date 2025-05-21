@@ -16,6 +16,11 @@ rendered properly in your Markdown viewer.
 
 # SegFormer
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
+</div>
+
 ## Overview
 
 The SegFormer model was proposed in [SegFormer: Simple and Efficient Design for Semantic Segmentation with Transformers](https://arxiv.org/abs/2105.15203) by Enze Xie, Wenhai Wang, Zhiding Yu, Anima Anandkumar, Jose M. Alvarez, Ping
@@ -43,7 +48,7 @@ The figure below illustrates the architecture of SegFormer. Taken from the [orig
 This model was contributed by [nielsr](https://huggingface.co/nielsr). The TensorFlow version
 of the model was contributed by [sayakpaul](https://huggingface.co/sayakpaul). The original code can be found [here](https://github.com/NVlabs/SegFormer).
 
-Tips:
+## Usage tips
 
 - SegFormer consists of a hierarchical Transformer encoder, and a lightweight all-MLP decoder head.
   [`SegformerModel`] is the hierarchical Transformer encoder (which in the paper is also referred to
@@ -66,12 +71,12 @@ Tips:
   important preprocessing step is that images and segmentation maps are randomly cropped and padded to the same size,
   such as 512x512 or 640x640, after which they are normalized.
 - One additional thing to keep in mind is that one can initialize [`SegformerImageProcessor`] with
-  `reduce_labels` set to `True` or `False`. In some datasets (like ADE20k), the 0 index is used in the annotated
+  `do_reduce_labels` set to `True` or `False`. In some datasets (like ADE20k), the 0 index is used in the annotated
   segmentation maps for background. However, ADE20k doesn't include the "background" class in its 150 labels.
-  Therefore, `reduce_labels` is used to reduce all labels by 1, and to make sure no loss is computed for the
+  Therefore, `do_reduce_labels` is used to reduce all labels by 1, and to make sure no loss is computed for the
   background class (i.e. it replaces 0 in the annotated maps by 255, which is the *ignore_index* of the loss function
   used by [`SegformerForSemanticSegmentation`]). However, other datasets use the 0 index as
-  background class and include this class as part of all labels. In that case, `reduce_labels` should be set to
+  background class and include this class as part of all labels. In that case, `do_reduce_labels` should be set to
   `False`, as loss should also be computed for the background class.
 - As most models, SegFormer comes in different sizes, the details of which can be found in the table below
   (taken from Table 7 of the [original paper](https://arxiv.org/abs/2105.15203)).
@@ -123,6 +128,9 @@ If you're interested in submitting a resource to be included here, please feel f
     - preprocess
     - post_process_semantic_segmentation
 
+<frameworkcontent>
+<pt>
+
 ## SegformerModel
 
 [[autodoc]] SegformerModel
@@ -143,6 +151,9 @@ If you're interested in submitting a resource to be included here, please feel f
 [[autodoc]] SegformerForSemanticSegmentation
     - forward
 
+</pt>
+<tf>
+
 ## TFSegformerDecodeHead
 
 [[autodoc]] TFSegformerDecodeHead
@@ -162,3 +173,6 @@ If you're interested in submitting a resource to be included here, please feel f
 
 [[autodoc]] TFSegformerForSemanticSegmentation
     - call
+
+</tf>
+</frameworkcontent>

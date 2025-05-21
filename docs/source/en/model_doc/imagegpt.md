@@ -15,6 +15,10 @@ specific language governing permissions and limitations under the License. -->
 
 # ImageGPT
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The ImageGPT model was proposed in [Generative Pretraining from Pixels](https://openai.com/blog/image-gpt) by Mark
@@ -40,7 +44,7 @@ alt="drawing" width="600"/>
 This model was contributed by [nielsr](https://huggingface.co/nielsr), based on [this issue](https://github.com/openai/image-gpt/issues/7). The original code can be found
 [here](https://github.com/openai/image-gpt).
 
-Tips:
+## Usage tips
 
 - ImageGPT is almost exactly the same as [GPT-2](gpt2), with the exception that a different activation
   function is used (namely "quick gelu"), and the layer normalization layers don't mean center the inputs. ImageGPT
@@ -92,7 +96,6 @@ If you're interested in submitting a resource to be included here, please feel f
 ## ImageGPTFeatureExtractor
 
 [[autodoc]] ImageGPTFeatureExtractor
-
     - __call__
 
 ## ImageGPTImageProcessor
@@ -103,17 +106,14 @@ If you're interested in submitting a resource to be included here, please feel f
 ## ImageGPTModel
 
 [[autodoc]] ImageGPTModel
-
     - forward
 
 ## ImageGPTForCausalImageModeling
 
 [[autodoc]] ImageGPTForCausalImageModeling
-
     - forward
 
 ## ImageGPTForImageClassification
 
 [[autodoc]] ImageGPTForImageClassification
-
     - forward

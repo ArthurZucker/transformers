@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """PyTorch GPTBigCode model."""
+
 import math
 from typing import List, Optional, Tuple, Union
 
@@ -21,6 +22,9 @@ from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from ...activations import ACT2FN
+from ...generation import GenerationMixin
+from ...modeling_attn_mask_utils import AttentionMaskConverter
+from ...modeling_flash_attention_utils import flash_attn_supports_top_left_mask, is_flash_attn_available
 from ...modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     CausalLMOutputWithCrossAttentions,
@@ -28,24 +32,19 @@ from ...modeling_outputs import (
     TokenClassifierOutput,
 )
 from ...modeling_utils import PreTrainedModel
+from ...pytorch_utils import is_torch_greater_or_equal_than_2_2
 from ...utils import (
-    add_code_sample_docstrings,
-    add_start_docstrings,
-    add_start_docstrings_to_model_forward,
+    auto_docstring,
     logging,
 )
 from .configuration_gpt_bigcode import GPTBigCodeConfig
 
 
+if is_flash_attn_available():
+    from ...modeling_flash_attention_utils import _flash_attention_forward
+
+
 logger = logging.get_logger(__name__)
-
-_CHECKPOINT_FOR_DOC = "bigcode/gpt_bigcode-santacoder"
-_CONFIG_FOR_DOC = "GPTBigCodeConfig"
-
-GPT_BIGCODE_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "bigcode/gpt_bigcode-santacoder",
-    # See all GPTBigCode models at https://huggingface.co/models?filter=gpt_bigcode
-]
 
 
 # Fused kernels
@@ -81,8 +80,9 @@ def masked_softmax(x: torch.Tensor, mask: torch.Tensor, mask_value: torch.Tensor
 class GPTBigCodeAttention(nn.Module):
     def __init__(self, config, is_cross_attention=False, layer_idx=None):
         super().__init__()
-        self.mask_value = None
+        self.config = config
 
+        self.mask_value = None
         self.multi_query = config.multi_query
         self.embed_dim = config.hidden_size
         self.num_heads = config.num_attention_heads
@@ -90,6 +90,8 @@ class GPTBigCodeAttention(nn.Module):
         self.kv_heads = 1 if self.multi_query else self.num_heads
         self.kv_dim = self.kv_heads * self.head_dim
         self.split_size = self.embed_dim
+        self.is_causal = True
+
         if self.head_dim * self.num_heads != self.embed_dim:
             raise ValueError(
                 f"`embed_dim` must be divisible by num_heads (got `embed_dim`: {self.embed_dim} and `num_heads`:"
@@ -104,6 +106,7 @@ class GPTBigCodeAttention(nn.Module):
         self.scale_attention_softmax_in_fp32 = (
             config.scale_attention_softmax_in_fp32 and config.attention_softmax_in_fp32
         )
+        self.attn_pdrop = config.attn_pdrop
 
         if self.is_cross_attention:
             if self.multi_query:
@@ -262,6 +265,269 @@ class GPTBigCodeAttention(nn.Module):
         return outputs  # a, present, (attentions)
 
 
+class GPTBigCodeFlashAttention2(GPTBigCodeAttention):
+    """
+    GPTBigCode flash attention module. This module inherits from `GPTBigCodeAttention` as the weights of the module
+    stays untouched. The only required change would be on the forward pass where it needs to correctly call the public
+    API of flash attention and deal with padding tokens in case the input contains any of them.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # TODO: Should be removed once Flash Attention for RoCm is bumped to 2.1.
+        # flash_attn<2.1 generates top-left aligned causal mask, while what is needed here is bottom-right alignment, that was made default for flash_attn>=2.1. This attribute is used to handle this difference. Reference: https://github.com/Dao-AILab/flash-attention/releases/tag/v2.1.0.
+        # Beware that with flash_attn<2.1, using q_seqlen != k_seqlen (except for the case q_seqlen == 1) produces a wrong mask (top-left).
+        self._flash_attn_uses_top_left_mask = flash_attn_supports_top_left_mask()
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        layer_past: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.Tensor] = None,
+        use_cache: Optional[bool] = False,
+        output_attentions: Optional[bool] = False,
+    ) -> Union[
+        Tuple[torch.Tensor, Optional[torch.Tensor]],
+        Tuple[torch.Tensor, Optional[torch.Tensor], Tuple[torch.Tensor, ...]],
+    ]:
+        if encoder_hidden_states is not None:
+            if not hasattr(self, "q_attn") or not self.is_cross_attention:
+                raise ValueError(
+                    "If class is used as cross attention, the weights `q_attn` have to be defined. "
+                    "Please make sure to instantiate class with `GPTBigCodeAttention(..., is_cross_attention=True)`."
+                )
+
+            query = self.q_attn(hidden_states)
+            key_value = self.c_attn(encoder_hidden_states)
+            attention_mask = encoder_attention_mask
+        elif self.multi_query:
+            query, key_value = self.c_attn(hidden_states).split((self.embed_dim, 2 * self.kv_dim), dim=2)
+        else:
+            # Note: We split as (self.num_heads, 3, self.head_dim) instead of (3, self.num_heads, self.head_dim),
+            # i.e., the memory layout is not the same as GPT2.
+            # This makes the concatenation with past_key_value more efficient.
+            query, key_value = (
+                self.c_attn(hidden_states)
+                .view(*hidden_states.shape[:2], self.num_heads, 3 * self.head_dim)
+                .transpose(1, 2)
+                .split((self.head_dim, 2 * self.head_dim), dim=3)
+            )
+
+        if layer_past is not None:
+            key_value = torch.cat((layer_past, key_value), dim=-2)
+        present = key_value if use_cache else None
+
+        key, value = key_value.split((self.head_dim, self.head_dim), dim=-1)
+
+        # Flash attention requires the input to have the shape
+        # batch_size x seq_length x head_dim x hidden_dim
+        if self.multi_query:
+            batch_size, query_length, _ = query.shape
+            query = query.reshape(batch_size, query_length, self.num_heads, self.head_dim)
+            key = key.unsqueeze(2)
+            value = value.unsqueeze(2)
+        else:
+            query_length = query.shape[2]
+            batch_size, _, tgt, _ = key.shape
+            query = query.transpose(1, 2).reshape(batch_size, query_length, self.num_heads, self.head_dim)
+            key = key.transpose(1, 2).reshape(batch_size, tgt, self.num_heads, self.head_dim)
+            value = value.transpose(1, 2).reshape(batch_size, tgt, self.num_heads, self.head_dim)
+
+        attn_dropout = self.attn_pdrop if self.training else 0.0
+
+        # In PEFT, usually we cast the layer norms in float32 for training stability reasons
+        # therefore the input hidden states gets silently casted in float32. Hence, we need
+        # cast them back in float16 just to be sure everything works as expected.
+        input_dtype = query.dtype
+        if input_dtype == torch.float32:
+            if torch.is_autocast_enabled():
+                target_dtype = torch.get_autocast_gpu_dtype()
+            # Handle the case where the model is quantized
+            elif hasattr(self.config, "_pre_quantization_dtype"):
+                target_dtype = self.config._pre_quantization_dtype
+            else:
+                target_dtype = self.c_attn.weight.dtype
+
+            logger.warning_once(
+                f"The input hidden states seems to be silently casted in float32, this might be related to"
+                f" the fact you have upcasted embedding or layer norm layers in float32. We will cast back the input in"
+                f" {target_dtype}."
+            )
+            query = query.to(target_dtype)
+            key = key.to(target_dtype)
+            value = value.to(target_dtype)
+
+        attn_output = _flash_attention_forward(
+            query,
+            key,
+            value,
+            attention_mask,
+            query_length,
+            dropout=attn_dropout,
+            is_causal=self.is_causal,
+            use_top_left_mask=self._flash_attn_uses_top_left_mask,
+        )
+
+        attn_weights_reshaped = attn_output.reshape(batch_size, query_length, self.num_heads * self.head_dim)
+        attn_output = self.c_proj(attn_weights_reshaped)
+        attn_output = self.resid_dropout(attn_output)
+
+        outputs = (attn_output, present)
+
+        if output_attentions:
+            if self.multi_query:
+                # Transpose to return weights in the usual format (batch_size, num_heads, query_length, key_length)
+                attn_weights_reshaped = attn_weights_reshaped.transpose(1, 2)
+        else:
+            attn_weights_reshaped = None
+
+        outputs += (attn_weights_reshaped,)
+
+        return outputs  # a, present, (attentions)
+
+
+class GPTBigCodeSdpaAttention(GPTBigCodeAttention):
+    def _attn(self, query, key, value, attention_mask=None):
+        scale = None
+        if not self.scale_attn_weights:
+            scale = 1
+
+        # MQA models: (batch_size, query_length, num_heads * head_dim)
+        # MHA models: (batch_size, num_heads, query_length, head_dim)
+        query_shape = query.shape
+        batch_size = query_shape[0]
+        key.shape[-2]
+
+        if self.multi_query:
+            query_length = query_shape[1]
+
+            # SDPA requires the dimension [..., sequence_length, head_dim].
+            query = query.view(batch_size, query_length, self.num_heads, self.head_dim).transpose(1, 2)
+
+            # Without these unsqueeze, SDPA complains as the query and key/value have a different number of dimensions.
+            key = key.unsqueeze(1)
+            value = value.unsqueeze(1)
+
+            # Although these expand are not numerically useful, PyTorch can not dispatch to memory-efficient backend
+            # and flash attention backend (No available kernel.  Aborting execution.) from the shapes
+            # query = [batch_size, num_heads, query_length, head_dim]
+            # key = [batch_size, 1, past_length, head_dim]
+            # value = [batch_size, 1, past_length, head_dim]
+            #
+            # torch==2.1.2 is bugged with non-contiguous inputs with custom attn_mask (https://github.com/pytorch/pytorch/issues/112577), hence the check.
+            if is_torch_greater_or_equal_than_2_2:
+                key = key.expand(-1, self.num_heads, -1, -1)
+                value = value.expand(-1, self.num_heads, -1, -1)
+        else:
+            query_length = query_shape[-1]
+
+            # See the comment above.
+            if query.device.type == "cuda" and attention_mask is not None:
+                query = query.contiguous()
+                key = key.contiguous()
+                value = value.contiguous()
+
+        # We dispatch to SDPA's Flash Attention or Efficient kernels via this `is_causal` if statement instead of an inline conditional assignment
+        # in SDPA to support both torch.compile's dynamic shapes and full graph options. An inline conditional prevents dynamic shapes from compiling.
+        # The query_length > 1 is necessary to match with AttentionMaskConverter.to_causal_4d that does not
+        # create a causal mask in case query_length == 1.
+        is_causal = True if self.is_causal and attention_mask is None and query_length > 1 else False
+
+        sdpa_result = torch.nn.functional.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=attention_mask,
+            dropout_p=self.attn_pdrop if self.training else 0.0,
+            is_causal=is_causal,
+            scale=scale,
+        )
+
+        if self.multi_query:
+            # (batch_size, num_heads, seq_len, head_dim) --> (batch_size, seq_len, num_heads, head_dim)
+            sdpa_result = sdpa_result.transpose(1, 2)
+
+            # Reshape is kind of expensive here, as it does a memory copy,
+            # but I did not manage to make away without it (logits do not match when using view)
+            # (batch_size, seq_len, num_heads, head_dim) --> (batch_size, seq_len, num_heads * head_dim)
+            sdpa_result = sdpa_result.reshape(query_shape)
+
+        return sdpa_result, None
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        layer_past: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.Tensor] = None,
+        use_cache: Optional[bool] = False,
+        output_attentions: Optional[bool] = False,
+    ) -> Union[
+        Tuple[torch.Tensor, Optional[torch.Tensor]],
+        Tuple[torch.Tensor, Optional[torch.Tensor], Tuple[torch.Tensor, ...]],
+    ]:
+        if encoder_hidden_states is not None:
+            if not hasattr(self, "q_attn") or not self.is_cross_attention:
+                raise ValueError(
+                    "If class is used as cross attention, the weights `q_attn` have to be defined. "
+                    "Please make sure to instantiate class with `GPTBigCodeAttention(..., is_cross_attention=True)`."
+                )
+
+            query = self.q_attn(hidden_states)
+            key_value = self.c_attn(encoder_hidden_states)
+            attention_mask = encoder_attention_mask
+        elif self.multi_query:
+            query, key_value = self.c_attn(hidden_states).split((self.embed_dim, 2 * self.kv_dim), dim=2)
+        else:
+            # Note: We split as (self.num_heads, 3, self.head_dim) instead of (3, self.num_heads, self.head_dim),
+            # i.e., the memory layout is not the same as GPT2.
+            # This makes the concatenation with past_key_value more efficient.
+            query, key_value = (
+                self.c_attn(hidden_states)
+                .view(*hidden_states.shape[:2], self.num_heads, 3 * self.head_dim)
+                .transpose(1, 2)
+                .split((self.head_dim, 2 * self.head_dim), dim=3)
+            )
+
+        if layer_past is not None:
+            key_value = torch.cat((layer_past, key_value), dim=-2)
+        present = key_value if use_cache else None
+
+        key, value = key_value.split((self.head_dim, self.head_dim), dim=-1)
+
+        if not output_attentions:
+            # Difference with the original implementation: there is no need to transpose the key here,
+            # as SDPA expects seq_length to be at index -2 for the key as well
+            attn_output, attn_weights = self._attn(query, key, value, attention_mask)
+        else:
+            # TODO: Improve this warning with e.g. `model.config._attn_implementation = "manual"` once this is implemented.
+            logger.warning_once(
+                "GPTBigCodeModel is using GPTBigCodeSdpaAttention, but `torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`."
+                ' Falling back to the manual attention implementation, but specifying the manual implementation will be required from Transformers version v5.0.0 onwards. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
+            )
+            attn_output, attn_weights = super()._attn(query, key.transpose(-1, -2), value, attention_mask)
+
+        if not self.multi_query:
+            attn_output = attn_output.transpose(1, 2).reshape(hidden_states.shape)
+        attn_output = self.c_proj(attn_output)
+        attn_output = self.resid_dropout(attn_output)
+
+        outputs = (attn_output, present)
+        if output_attentions:
+            if self.multi_query:
+                # Transpose to return weights in the usual format (batch_size, num_heads, query_length, key_length)
+                attn_weights = attn_weights.transpose(1, 2)
+            outputs += (attn_weights,)
+
+        return outputs
+
+
 class GPTBigCodeMLP(nn.Module):
     def __init__(self, intermediate_size, config):
         super().__init__()
@@ -280,6 +546,13 @@ class GPTBigCodeMLP(nn.Module):
         return hidden_states
 
 
+GPTBIGCODE_ATTENTION_CLASSES = {
+    "eager": GPTBigCodeAttention,
+    "flash_attention_2": GPTBigCodeFlashAttention2,
+    "sdpa": GPTBigCodeSdpaAttention,
+}
+
+
 class GPTBigCodeBlock(nn.Module):
     def __init__(self, config, layer_idx=None):
         super().__init__()
@@ -287,13 +560,19 @@ class GPTBigCodeBlock(nn.Module):
         self.inner_dim = config.n_inner if config.n_inner is not None else 4 * hidden_size
 
         self.ln_1 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
-        self.attn = GPTBigCodeAttention(config, layer_idx=layer_idx)
+
+        self.attn = GPTBIGCODE_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx=layer_idx)
+
         self.ln_2 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
 
         if config.add_cross_attention:
             if config.multi_query:
                 raise NotImplementedError("Cross-attention not implemented for MQA")
-            self.crossattention = GPTBigCodeAttention(config, is_cross_attention=True, layer_idx=layer_idx)
+
+            self.crossattention = GPTBIGCODE_ATTENTION_CLASSES[config._attn_implementation](
+                config, is_cross_attention=True, layer_idx=layer_idx
+            )
+
             self.ln_cross_attn = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
 
         self.mlp = GPTBigCodeMLP(self.inner_dim, config)
@@ -308,6 +587,7 @@ class GPTBigCodeBlock(nn.Module):
         encoder_attention_mask: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
+        **kwargs,
     ) -> Union[
         Tuple[torch.Tensor], Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
     ]:
@@ -362,17 +642,15 @@ class GPTBigCodeBlock(nn.Module):
         return outputs  # hidden_states, present, (attentions, cross_attentions)
 
 
+@auto_docstring
 class GPTBigCodePreTrainedModel(PreTrainedModel):
-    """
-    An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
-    models.
-    """
-
     config_class = GPTBigCodeConfig
     base_model_prefix = "transformer"
     supports_gradient_checkpointing = True
     _no_split_modules = ["GPTBigCodeBlock"]
     _skip_keys_device_placement = "past_key_values"
+    _supports_flash_attn_2 = True
+    _supports_sdpa = True
 
     def __init__(self, *inputs, **kwargs):
         super().__init__(*inputs, **kwargs)
@@ -404,102 +682,8 @@ class GPTBigCodePreTrainedModel(PreTrainedModel):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
-    # Copied from transformers.models.gpt2.modeling_gpt2.GPT2PreTrainedModel._set_gradient_checkpointing with GPT2->GPTBigCode
-    def _set_gradient_checkpointing(self, module, gradient_checkpointing_func=None):
-        if isinstance(module, GPTBigCodeModel):
-            module.gradient_checkpointing_func = gradient_checkpointing_func
-            module.gradient_checkpointing = gradient_checkpointing_func is not None
 
-
-GPT_BIGCODE_START_DOCSTRING = r"""
-
-    This model inherits from [`PreTrainedModel`]. Check the superclass documentation for the generic methods the
-    library implements for all its model (such as downloading or saving, resizing the input embeddings, pruning heads
-    etc.)
-
-    This model is also a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass.
-    Use it as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage
-    and behavior.
-
-    Parameters:
-        config ([`GPTBigCodeConfig`]): Model configuration class with all the parameters of the model.
-            Initializing with a config file does not load the weights associated with the model, only the
-            configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
-"""
-
-GPT_BIGCODE_INPUTS_DOCSTRING = r"""
-    Args:
-        input_ids (`torch.Tensor` of shape `(batch_size, input_ids_length)`):
-            `input_ids_length` = `sequence_length` if `past_key_values` is `None` else
-            `past_key_values[0][0].shape[-2]` (`sequence_length` of input past key value states). Indices of input
-            sequence tokens in the vocabulary.
-
-            If `past_key_values` is used, only `input_ids` that do not have their past calculated should be passed as
-            `input_ids`.
-
-            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
-            [`PreTrainedTokenizer.__call__`] for details.
-
-            [What are input IDs?](../glossary#input-ids)
-        past_key_values (`Tuple[torch.Tensor]` of length `config.n_layers`):
-            Contains precomputed hidden-states (key and values in the attention blocks) as computed by the model (see
-            `past_key_values` output below). Can be used to speed up sequential decoding. The `input_ids` which have
-            their past given to this model should not be passed as `input_ids` as they have already been computed.
-        attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
-
-            - 1 for tokens that are **not masked**,
-            - 0 for tokens that are **masked**.
-
-            If `past_key_values` is used, `attention_mask` needs to contain the masking strategy that was used for
-            `past_key_values`. In other words, the `attention_mask` always has to have the length:
-            `len(past_key_values) + len(input_ids)`
-
-            [What are attention masks?](../glossary#attention-mask)
-        token_type_ids (`torch.Tensor` of shape `(batch_size, input_ids_length)`, *optional*):
-            Segment token indices to indicate first and second portions of the inputs. Indices are selected in `[0,
-            1]`:
-
-            - 0 corresponds to a *sentence A* token,
-            - 1 corresponds to a *sentence B* token.
-
-            [What are token type IDs?](../glossary#token-type-ids)
-        position_ids (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Indices of positions of each input sequence tokens in the position embeddings. Selected in the range `[0,
-            config.max_position_embeddings - 1]`.
-
-            [What are position IDs?](../glossary#position-ids)
-        head_mask (`torch.Tensor` of shape `(num_heads,)` or `(num_layers, num_heads)`, *optional*):
-            Mask to nullify selected heads of the self-attention modules. Mask values selected in `[0, 1]`:
-
-            - 1 indicates the head is **not masked**,
-            - 0 indicates the head is **masked**.
-
-        inputs_embeds (`torch.Tensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
-            Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
-            is useful if you want more control over how to convert `input_ids` indices into associated vectors than the
-            model's internal embedding lookup matrix.
-
-            If `past_key_values` is used, optionally only the last `inputs_embeds` have to be input (see
-            `past_key_values`).
-        use_cache (`bool`, *optional*):
-            If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
-            `past_key_values`).
-        output_attentions (`bool`, *optional*):
-            Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
-            tensors for more detail.
-        output_hidden_states (`bool`, *optional*):
-            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
-            more detail.
-        return_dict (`bool`, *optional*):
-            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-"""
-
-
-@add_start_docstrings(
-    "The bare GPT_BIGCODE Model transformer outputting raw hidden-states without any specific head on top.",
-    GPT_BIGCODE_START_DOCSTRING,
-)
+@auto_docstring
 class GPTBigCodeModel(GPTBigCodePreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -520,6 +704,9 @@ class GPTBigCodeModel(GPTBigCodePreTrainedModel):
 
         self.gradient_checkpointing = False
 
+        self._use_sdpa = config._attn_implementation == "sdpa"
+        self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
+
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -529,12 +716,7 @@ class GPTBigCodeModel(GPTBigCodePreTrainedModel):
     def set_input_embeddings(self, new_embeddings):
         self.wte = new_embeddings
 
-    @add_start_docstrings_to_model_forward(GPT_BIGCODE_INPUTS_DOCSTRING)
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPastAndCrossAttentions,
-        config_class=_CONFIG_FOR_DOC,
-    )
+    @auto_docstring
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
@@ -551,6 +733,20 @@ class GPTBigCodeModel(GPTBigCodePreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPastAndCrossAttentions]:
+        r"""
+        input_ids (`torch.Tensor` of shape `(batch_size, input_ids_length)`):
+            `input_ids_length` = `sequence_length` if `past_key_values` is `None` else
+            `past_key_values[0][0].shape[-2]` (`sequence_length` of input past key value states). Indices of input
+            sequence tokens in the vocabulary.
+
+            If `past_key_values` is used, only `input_ids` that do not have their past calculated should be passed as
+            `input_ids`.
+
+            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
+            [`PreTrainedTokenizer.__call__`] for details.
+
+            [What are input IDs?](../glossary#input-ids)
+        """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -600,28 +796,68 @@ class GPTBigCodeModel(GPTBigCodePreTrainedModel):
         key_length = past_length + query_length
         self_attention_mask = self.bias[None, key_length - query_length : key_length, :key_length]
 
-        if attention_mask is not None:
-            self_attention_mask = self_attention_mask * attention_mask.view(batch_size, 1, -1).to(
-                dtype=torch.bool, device=self_attention_mask.device
+        if self._use_flash_attention_2:
+            # 2d mask is passed through the layers
+            attention_mask = attention_mask.bool() if (attention_mask is not None and 0 in attention_mask) else None
+            encoder_attention_mask = (
+                encoder_attention_mask.bool()
+                if (encoder_attention_mask is not None and 0 in encoder_attention_mask)
+                else None
             )
-
-        # MQA models: (batch_size, query_length, n_heads, key_length)
-        # MHA models: (batch_size, n_heads, query_length, key_length)
-        attention_mask = self_attention_mask.unsqueeze(2 if self.multi_query else 1)
-
-        # If a 2D or 3D attention mask is provided for the cross-attention
-        # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
-        if (
-            self.config.add_cross_attention
-            and encoder_hidden_states is not None
-            and encoder_attention_mask is not None
-        ):
-            if encoder_attention_mask.dim() == 2:
-                encoder_attention_mask.unsqueeze(1)
-            assert encoder_attention_mask.dim() == 3
-            encoder_attention_mask = encoder_attention_mask.bool().unsqueeze(2 if self.multi_query else 1)
         else:
-            encoder_attention_mask = None
+            # 4d mask is passed through the layers
+            if attention_mask is not None:
+                self_attention_mask = self_attention_mask * attention_mask.view(batch_size, 1, -1).to(
+                    dtype=torch.bool, device=self_attention_mask.device
+                )
+
+            # MQA models: (batch_size, query_length, n_heads, key_length)
+            # MHA models: (batch_size, n_heads, query_length, key_length)
+            self_attention_mask = self_attention_mask.unsqueeze(2 if self.multi_query else 1)
+
+            if self._use_sdpa and head_mask is None and not output_attentions:
+                # SDPA with a custom mask is much faster in fp16/fp32 dtype rather than bool. Cast here to floating point instead of at every layer.
+                dtype = self.wte.weight.dtype
+                min_dtype = torch.finfo(dtype).min
+                self_attention_mask = torch.where(
+                    self_attention_mask,
+                    torch.full([], 0.0, dtype=dtype, device=self_attention_mask.device),
+                    torch.full([], min_dtype, dtype=dtype, device=self_attention_mask.device),
+                )
+
+                # output_attentions=True can not be supported when using SDPA, and we fall back on
+                # the manual implementation that requires a 4D causal mask in all cases.
+                if self.multi_query:
+                    # gpt_bigcode using MQA has the bad taste to use a causal mask with shape
+                    # [batch_size, target_length, 1, source_length], not compatible with SDPA, hence this transpose.
+                    self_attention_mask = self_attention_mask.transpose(1, 2)
+
+                if (
+                    query_length > 1
+                    and attention_mask is not None
+                    and attention_mask.device.type in ["cuda", "xpu", "npu"]
+                ):
+                    # From PyTorch 2.1 onwards, F.scaled_dot_product_attention with the memory-efficient attention backend
+                    # produces nans if sequences are completely unattended in the attention mask. Details: https://github.com/pytorch/pytorch/issues/110213
+                    self_attention_mask = AttentionMaskConverter._unmask_unattended(
+                        self_attention_mask, min_dtype=min_dtype
+                    )
+
+            attention_mask = self_attention_mask
+
+            # If a 2D or 3D attention mask is provided for the cross-attention
+            # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
+            if (
+                self.config.add_cross_attention
+                and encoder_hidden_states is not None
+                and encoder_attention_mask is not None
+            ):
+                if encoder_attention_mask.dim() == 2:
+                    encoder_attention_mask.unsqueeze(1)
+                assert encoder_attention_mask.dim() == 3
+                encoder_attention_mask = encoder_attention_mask.bool().unsqueeze(2 if self.multi_query else 1)
+            else:
+                encoder_attention_mask = None
 
         # Prepare head mask if needed
         # 1.0 in head_mask indicate we keep the head
@@ -632,7 +868,7 @@ class GPTBigCodeModel(GPTBigCodePreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = self.wte(input_ids)
         position_embeds = self.wpe(position_ids)
-        hidden_states = inputs_embeds + position_embeds
+        hidden_states = inputs_embeds + position_embeds.to(inputs_embeds.device)
 
         if token_type_ids is not None:
             token_type_embeds = self.wte(token_type_ids)
@@ -651,7 +887,7 @@ class GPTBigCodeModel(GPTBigCodePreTrainedModel):
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
             if self.gradient_checkpointing and self.training:
-                outputs = self.gradient_checkpointing_func(
+                outputs = self._gradient_checkpointing_func(
                     block.__call__,
                     hidden_states,
                     None,
@@ -706,14 +942,13 @@ class GPTBigCodeModel(GPTBigCodePreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    """
+@auto_docstring(
+    custom_intro="""
     The GPT_BIGCODE Model transformer with a language modeling head on top (linear layer with weights tied to the input
     embeddings).
-    """,
-    GPT_BIGCODE_START_DOCSTRING,
+    """
 )
-class GPTBigCodeForCausalLM(GPTBigCodePreTrainedModel):
+class GPTBigCodeForCausalLM(GPTBigCodePreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config):
@@ -731,6 +966,8 @@ class GPTBigCodeForCausalLM(GPTBigCodePreTrainedModel):
         self.lm_head = new_embeddings
 
     def prepare_inputs_for_generation(self, input_ids, past_key_values=None, inputs_embeds=None, **kwargs):
+        # Overwritten -- `past_key_values` with uncommon shape
+
         token_type_ids = kwargs.get("token_type_ids", None)
         # Omit tokens covered by past_key_values
         if past_key_values:
@@ -779,12 +1016,25 @@ class GPTBigCodeForCausalLM(GPTBigCodePreTrainedModel):
         )
         return model_inputs
 
-    @add_start_docstrings_to_model_forward(GPT_BIGCODE_INPUTS_DOCSTRING)
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=CausalLMOutputWithCrossAttentions,
-        config_class=_CONFIG_FOR_DOC,
-    )
+    def _get_initial_cache_position(self, seq_length, device, model_kwargs):
+        """
+        Calculates `cache_position` for the pre-fill stage based on `input_ids` and optionally past length.
+        Since gpt bigcode is special, the method is overridden here, other models use it from `generation.utils.py`.
+        """
+        past_length = 0
+        if "past_key_values" in model_kwargs:
+            if self.config.multi_query:
+                past_length = model_kwargs["past_key_values"][0].shape[1]
+            else:
+                past_length = model_kwargs["past_key_values"][0].shape[2]
+        if "inputs_embeds" in model_kwargs:
+            cur_len = model_kwargs["inputs_embeds"].shape[1]
+        else:
+            cur_len = seq_length
+        model_kwargs["cache_position"] = torch.arange(past_length, cur_len, device=device)
+        return model_kwargs
+
+    @auto_docstring
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
@@ -801,9 +1051,22 @@ class GPTBigCodeForCausalLM(GPTBigCodePreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
         r"""
-        labels (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+        input_ids (`torch.Tensor` of shape `(batch_size, input_ids_length)`):
+            `input_ids_length` = `sequence_length` if `past_key_values` is `None` else
+            `past_key_values[0][0].shape[-2]` (`sequence_length` of input past key value states). Indices of input
+            sequence tokens in the vocabulary.
+
+            If `past_key_values` is used, only `input_ids` that do not have their past calculated should be passed as
+            `input_ids`.
+
+            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
+            [`PreTrainedTokenizer.__call__`] for details.
+
+            [What are input IDs?](../glossary#input-ids)
+        labels (`torch.Tensor` of shape `(batch_size, input_ids_length)`, *optional*):
             Labels for language modeling. Note that the labels **are shifted** inside the model, i.e. you can set
             `labels = input_ids` Indices are selected in `[-100, 0, ..., config.vocab_size]` All labels set to `-100`
             are ignored (masked), the loss is only computed for labels in `[0, ..., config.vocab_size]`
@@ -831,12 +1094,12 @@ class GPTBigCodeForCausalLM(GPTBigCodePreTrainedModel):
 
         loss = None
         if labels is not None:
-            # Shift so that tokens < n predict n
-            shift_logits = lm_logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous().to(shift_logits.device)
-            # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            loss = self.loss_function(
+                lm_logits,
+                labels,
+                vocab_size=self.config.vocab_size,
+                **kwargs,
+            )
 
         if not return_dict:
             output = (lm_logits,) + transformer_outputs[1:]
@@ -863,8 +1126,8 @@ class GPTBigCodeForCausalLM(GPTBigCodePreTrainedModel):
         return tuple(layer_past.index_select(0, beam_idx.to(layer_past.device)) for layer_past in past_key_values)
 
 
-@add_start_docstrings(
-    """
+@auto_docstring(
+    custom_intro="""
     The GPTBigCode Model transformer with a sequence classification head on top (linear layer).
 
     [`GPTBigCodeForSequenceClassification`] uses the last token in order to do the classification, as other causal
@@ -875,8 +1138,7 @@ class GPTBigCodeForCausalLM(GPTBigCodePreTrainedModel):
     no `pad_token_id` is defined, it simply takes the last value in each row of the batch. Since it cannot guess the
     padding tokens when `inputs_embeds` are passed instead of `input_ids`, it does the same (take the last value in
     each row of the batch).
-    """,
-    GPT_BIGCODE_START_DOCSTRING,
+    """
 )
 class GPTBigCodeForSequenceClassification(GPTBigCodePreTrainedModel):
     def __init__(self, config):
@@ -888,7 +1150,7 @@ class GPTBigCodeForSequenceClassification(GPTBigCodePreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @add_start_docstrings_to_model_forward(GPT_BIGCODE_INPUTS_DOCSTRING)
+    @auto_docstring
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
@@ -905,6 +1167,18 @@ class GPTBigCodeForSequenceClassification(GPTBigCodePreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, SequenceClassifierOutputWithPast]:
         r"""
+        input_ids (`torch.Tensor` of shape `(batch_size, input_ids_length)`):
+            `input_ids_length` = `sequence_length` if `past_key_values` is `None` else
+            `past_key_values[0][0].shape[-2]` (`sequence_length` of input past key value states). Indices of input
+            sequence tokens in the vocabulary.
+
+            If `past_key_values` is used, only `input_ids` that do not have their past calculated should be passed as
+            `input_ids`.
+
+            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
+            [`PreTrainedTokenizer.__call__`] for details.
+
+            [What are input IDs?](../glossary#input-ids)
         labels (`torch.Tensor` of shape `(batch_size,)`, *optional*):
             Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
             config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
@@ -933,24 +1207,23 @@ class GPTBigCodeForSequenceClassification(GPTBigCodePreTrainedModel):
         else:
             batch_size, sequence_length = inputs_embeds.shape[:2]
 
-        assert (
-            self.config.pad_token_id is not None or batch_size == 1
-        ), "Cannot handle batch sizes > 1 if no padding token is defined."
+        if self.config.pad_token_id is None and batch_size != 1:
+            raise ValueError("Cannot handle batch sizes > 1 if no padding token is defined.")
         if self.config.pad_token_id is None:
-            sequence_lengths = -1
+            last_non_pad_token = -1
+        elif input_ids is not None:
+            # To handle both left- and right- padding, we take the rightmost token that is not equal to pad_token_id
+            non_pad_mask = (input_ids != self.config.pad_token_id).to(logits.device, torch.int32)
+            token_indices = torch.arange(input_ids.shape[-1], device=logits.device, dtype=torch.int32)
+            last_non_pad_token = (token_indices * non_pad_mask).argmax(-1)
         else:
-            if input_ids is not None:
-                sequence_lengths = (torch.eq(input_ids, self.config.pad_token_id).long().argmax(-1) - 1).to(
-                    logits.device
-                )
-            else:
-                sequence_lengths = -1
-                logger.warning(
-                    f"{self.__class__.__name__} will not detect padding tokens in `inputs_embeds`. Results may be "
-                    "unexpected if using padding tokens in conjunction with `inputs_embeds.`"
-                )
+            last_non_pad_token = -1
+            logger.warning_once(
+                f"{self.__class__.__name__} will not detect padding tokens in `inputs_embeds`. Results may be "
+                "unexpected if using padding tokens in conjunction with `inputs_embeds.`"
+            )
 
-        pooled_logits = logits[torch.arange(batch_size, device=logits.device), sequence_lengths]
+        pooled_logits = logits[torch.arange(batch_size, device=logits.device), last_non_pad_token]
 
         loss = None
         if labels is not None:
@@ -989,13 +1262,7 @@ class GPTBigCodeForSequenceClassification(GPTBigCodePreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    """
-    GPT_BIGCODE Model with a token classification head on top (a linear layer on top of the hidden-states output) e.g.
-    for Named-Entity-Recognition (NER) tasks.
-    """,
-    GPT_BIGCODE_START_DOCSTRING,
-)
+@auto_docstring
 class GPTBigCodeForTokenClassification(GPTBigCodePreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -1014,7 +1281,7 @@ class GPTBigCodeForTokenClassification(GPTBigCodePreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @add_start_docstrings_to_model_forward(GPT_BIGCODE_INPUTS_DOCSTRING)
+    @auto_docstring
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
@@ -1031,6 +1298,18 @@ class GPTBigCodeForTokenClassification(GPTBigCodePreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, TokenClassifierOutput]:
         r"""
+        input_ids (`torch.Tensor` of shape `(batch_size, input_ids_length)`):
+            `input_ids_length` = `sequence_length` if `past_key_values` is `None` else
+            `past_key_values[0][0].shape[-2]` (`sequence_length` of input past key value states). Indices of input
+            sequence tokens in the vocabulary.
+
+            If `past_key_values` is used, only `input_ids` that do not have their past calculated should be passed as
+            `input_ids`.
+
+            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
+            [`PreTrainedTokenizer.__call__`] for details.
+
+            [What are input IDs?](../glossary#input-ids)
         labels (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
             Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
             config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
@@ -1071,3 +1350,12 @@ class GPTBigCodeForTokenClassification(GPTBigCodePreTrainedModel):
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
         )
+
+
+__all__ = [
+    "GPTBigCodeForSequenceClassification",
+    "GPTBigCodeForTokenClassification",
+    "GPTBigCodeForCausalLM",
+    "GPTBigCodeModel",
+    "GPTBigCodePreTrainedModel",
+]

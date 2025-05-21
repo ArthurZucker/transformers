@@ -25,7 +25,7 @@ import numpy as np
 from datasets import load_dataset
 from parameterized import parameterized
 
-from transformers import AutoProcessor
+from transformers import AutoFeatureExtractor, AutoProcessor
 from transformers.models.wav2vec2 import Wav2Vec2CTCTokenizer, Wav2Vec2FeatureExtractor
 from transformers.models.wav2vec2.tokenization_wav2vec2 import VOCAB_FILES_NAMES
 from transformers.testing_utils import require_pyctcdecode, require_torch, require_torchaudio, slow
@@ -156,6 +156,35 @@ class Wav2Vec2ProcessorWithLMTest(unittest.TestCase):
 
         for key in input_feat_extract.keys():
             self.assertAlmostEqual(input_feat_extract[key].sum(), input_processor[key].sum(), delta=1e-2)
+
+    def test_another_feature_extractor(self):
+        feature_extractor = AutoFeatureExtractor.from_pretrained("facebook/w2v-bert-2.0")
+        tokenizer = self.get_tokenizer()
+        decoder = self.get_decoder()
+
+        processor = Wav2Vec2ProcessorWithLM(tokenizer=tokenizer, feature_extractor=feature_extractor, decoder=decoder)
+
+        raw_speech = floats_list((3, 1000))
+
+        input_feat_extract = feature_extractor(raw_speech, return_tensors="np")
+        input_processor = processor(raw_speech, return_tensors="np")
+
+        for key in input_feat_extract.keys():
+            self.assertAlmostEqual(input_feat_extract[key].sum(), input_processor[key].sum(), delta=1e-2)
+
+        self.assertListEqual(
+            processor.model_input_names,
+            feature_extractor.model_input_names,
+            msg="`processor` and `feature_extractor` model input names do not match",
+        )
+
+    def test_wrong_feature_extractor_raises_error(self):
+        feature_extractor = AutoFeatureExtractor.from_pretrained("openai/whisper-large-v3")
+        tokenizer = self.get_tokenizer()
+        decoder = self.get_decoder()
+
+        with self.assertRaises(ValueError):
+            Wav2Vec2ProcessorWithLM(tokenizer=tokenizer, feature_extractor=feature_extractor, decoder=decoder)
 
     def test_tokenizer(self):
         feature_extractor = self.get_feature_extractor()
@@ -434,7 +463,9 @@ class Wav2Vec2ProcessorWithLMTest(unittest.TestCase):
     def test_word_time_stamp_integration(self):
         import torch
 
-        ds = load_dataset("common_voice", "en", split="train", streaming=True)
+        ds = load_dataset(
+            "mozilla-foundation/common_voice_11_0", "en", split="train", streaming=True, trust_remote_code=True
+        )
         ds = ds.cast_column("audio", datasets.Audio(sampling_rate=16_000))
         ds_iter = iter(ds)
         sample = next(ds_iter)
@@ -442,7 +473,6 @@ class Wav2Vec2ProcessorWithLMTest(unittest.TestCase):
         processor = AutoProcessor.from_pretrained("patrickvonplaten/wav2vec2-base-100h-with-lm")
         model = Wav2Vec2ForCTC.from_pretrained("patrickvonplaten/wav2vec2-base-100h-with-lm")
 
-        # compare to filename `common_voice_en_100038.mp3` of dataset viewer on https://huggingface.co/datasets/common_voice/viewer/en/train
         input_values = processor(sample["audio"]["array"], return_tensors="pt").input_values
 
         with torch.no_grad():
@@ -461,6 +491,7 @@ class Wav2Vec2ProcessorWithLMTest(unittest.TestCase):
         ]
 
         EXPECTED_TEXT = "WHY DOES MILISANDRA LOOK LIKE SHE WANTS TO CONSUME JOHN SNOW ON THE RIVER AT THE WALL"
+        EXPECTED_TEXT = "THE TRACK APPEARS ON THE COMPILATION ALBUM CRAFT FORKS"
 
         # output words
         self.assertEqual(" ".join(self.get_from_offsets(word_time_stamps, "word")), EXPECTED_TEXT)
@@ -471,9 +502,9 @@ class Wav2Vec2ProcessorWithLMTest(unittest.TestCase):
         end_times = torch.tensor(self.get_from_offsets(word_time_stamps, "end_time"))
 
         # fmt: off
-        expected_start_tensor = torch.tensor([1.4199, 1.6599, 2.2599, 3.0, 3.24, 3.5999, 3.7999, 4.0999, 4.26, 4.94, 5.28, 5.6599, 5.78, 5.94, 6.32, 6.5399, 6.6599])
-        expected_end_tensor = torch.tensor([1.5399, 1.8999, 2.9, 3.16, 3.5399, 3.72, 4.0199, 4.1799, 4.76, 5.1599, 5.5599, 5.6999, 5.86, 6.1999, 6.38, 6.6199, 6.94])
+        expected_start_tensor = torch.tensor([0.6800, 0.8800, 1.1800, 1.8600, 1.9600, 2.1000, 3.0000, 3.5600, 3.9800])
+        expected_end_tensor = torch.tensor([0.7800, 1.1000, 1.6600, 1.9200, 2.0400, 2.8000, 3.3000, 3.8800, 4.2800])
         # fmt: on
 
-        self.assertTrue(torch.allclose(start_times, expected_start_tensor, atol=0.01))
-        self.assertTrue(torch.allclose(end_times, expected_end_tensor, atol=0.01))
+        torch.testing.assert_close(start_times, expected_start_tensor, rtol=0.01, atol=0.01)
+        torch.testing.assert_close(end_times, expected_end_tensor, rtol=0.01, atol=0.01)

@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # LayoutXLM
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 LayoutXLM was proposed in [LayoutXLM: Multimodal Pre-training for Multilingual Visually-rich Document Understanding](https://arxiv.org/abs/2104.08836) by Yiheng Xu, Tengchao Lv, Lei Cui, Guoxin Wang, Yijuan Lu, Dinei Florencio, Cha
@@ -32,6 +36,10 @@ introduce a multilingual form understanding benchmark dataset named XFUN, which 
 7 languages (Chinese, Japanese, Spanish, French, Italian, German, Portuguese), and key-value pairs are manually labeled
 for each language. Experiment results show that the LayoutXLM model has significantly outperformed the existing SOTA
 cross-lingual pre-trained models on the XFUN dataset.*
+
+This model was contributed by [nielsr](https://huggingface.co/nielsr). The original code can be found [here](https://github.com/microsoft/unilm).
+
+## Usage tips and examples
 
 One can directly plug in the weights of LayoutXLM into a LayoutLMv2 model, like so:
 
@@ -56,10 +64,10 @@ Similar to LayoutLMv2, you can use [`LayoutXLMProcessor`] (which internally appl
 [`LayoutXLMTokenizer`]/[`LayoutXLMTokenizerFast`] in sequence) to prepare all
 data for the model.
 
+<Tip>
+
 As LayoutXLM's architecture is equivalent to that of LayoutLMv2, one can refer to [LayoutLMv2's documentation page](layoutlmv2) for all tips, code examples and notebooks.
-
-This model was contributed by [nielsr](https://huggingface.co/nielsr). The original code can be found [here](https://github.com/microsoft/unilm).
-
+</Tip>
 
 ## LayoutXLMTokenizer
 

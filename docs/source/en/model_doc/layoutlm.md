@@ -16,6 +16,11 @@ rendered properly in your Markdown viewer.
 
 # LayoutLM
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
+</div>
+
 <a id='Overview'></a>
 
 ## Overview
@@ -46,7 +51,7 @@ document-level pretraining. It achieves new state-of-the-art results in several 
 understanding (from 70.72 to 79.27), receipt understanding (from 94.02 to 95.24) and document image classification
 (from 93.07 to 94.42).*
 
-Tips:
+## Usage tips
 
 - In addition to *input_ids*, [`~transformers.LayoutLMModel.forward`] also expects the input `bbox`, which are
   the bounding boxes (i.e. 2D-positions) of the input tokens. These can be obtained using an external OCR engine such
@@ -123,6 +128,9 @@ A list of official Hugging Face and community (indicated by 🌎) resources to h
 
 [[autodoc]] LayoutLMTokenizerFast
 
+<frameworkcontent>
+<pt>
+
 ## LayoutLMModel
 
 [[autodoc]] LayoutLMModel
@@ -143,6 +151,9 @@ A list of official Hugging Face and community (indicated by 🌎) resources to h
 
 [[autodoc]] LayoutLMForQuestionAnswering
 
+</pt>
+<tf>
+
 ## TFLayoutLMModel
 
 [[autodoc]] TFLayoutLMModel
@@ -162,3 +173,8 @@ A list of official Hugging Face and community (indicated by 🌎) resources to h
 ## TFLayoutLMForQuestionAnswering
 
 [[autodoc]] TFLayoutLMForQuestionAnswering
+
+</tf>
+</frameworkcontent>
+
+

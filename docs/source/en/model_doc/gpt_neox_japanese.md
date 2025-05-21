@@ -16,6 +16,11 @@ rendered properly in your Markdown viewer.
 
 # GPT-NeoX-Japanese
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="FlashAttention" src="https://img.shields.io/badge/%E2%9A%A1%EF%B8%8E%20FlashAttention-eae0c8?style=flat">
+</div>
+
 ## Overview
 
 We introduce GPT-NeoX-Japanese, which is an autoregressive language model for Japanese, trained on top of [https://github.com/EleutherAI/gpt-neox](https://github.com/EleutherAI/gpt-neox).
@@ -25,7 +30,7 @@ Following the recommendations from Google's research on [PaLM](https://ai.google
 
 Development of the model was led by [Shinya Otani](https://github.com/SO0529), [Takayoshi Makabe](https://github.com/spider-man-tm), [Anuj Arora](https://github.com/Anuj040), and [Kyo Hattori](https://github.com/go5paopao) from [ABEJA, Inc.](https://www.abejainc.com/). For more information on this model-building activity, please refer [here (ja)](https://tech-blog.abeja.asia/entry/abeja-gpt-project-202207).
 
-### Generation
+### Usage example
 
 The `generate()` method can be used to generate text using GPT NeoX Japanese model.
 
@@ -51,7 +56,7 @@ The `generate()` method can be used to generate text using GPT NeoX Japanese mod
 人とAIが協調するためには、AIと人が共存し、AIを正しく理解する必要があります。
 ```
 
-## Documentation resources
+## Resources
 
 - [Causal language modeling task guide](../tasks/language_modeling)
 

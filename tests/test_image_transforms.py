@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2022 HuggingFace Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -302,7 +301,7 @@ class ImageTransformsTester(unittest.TestCase):
         normalized_image = normalize(image, mean=mean, std=std, data_format="channels_first")
         self.assertIsInstance(normalized_image, np.ndarray)
         self.assertEqual(normalized_image.shape, (3, 224, 224))
-        self.assertTrue(np.allclose(normalized_image, expected_image))
+        self.assertTrue(np.allclose(normalized_image, expected_image, atol=1e-6))
 
         # Test image with 4 channels is normalized correctly
         image = np.random.randint(0, 256, (224, 224, 4)) / 255
@@ -310,8 +309,41 @@ class ImageTransformsTester(unittest.TestCase):
         std = (0.1, 0.2, 0.3, 0.4)
         expected_image = (image - mean) / std
         self.assertTrue(
-            np.allclose(normalize(image, mean=mean, std=std, input_data_format="channels_last"), expected_image)
+            np.allclose(
+                normalize(image, mean=mean, std=std, input_data_format="channels_last"), expected_image, atol=1e-6
+            )
         )
+
+        # Test float32 image input keeps float32 dtype
+        image = np.random.randint(0, 256, (224, 224, 3)).astype(np.float32) / 255
+        mean = (0.5, 0.6, 0.7)
+        std = (0.1, 0.2, 0.3)
+        expected_image = ((image - mean) / std).astype(np.float32)
+        normalized_image = normalize(image, mean=mean, std=std)
+        self.assertEqual(normalized_image.dtype, np.float32)
+        self.assertTrue(np.allclose(normalized_image, expected_image, atol=1e-6))
+
+        # Test float16 image input keeps float16 dtype
+        image = np.random.randint(0, 256, (224, 224, 3)).astype(np.float16) / 255
+        mean = np.array((0.5, 0.6, 0.7))
+        std = np.array((0.1, 0.2, 0.3))
+
+        # The mean and std are cast to match the dtype of the input image
+        cast_mean = np.array(mean, dtype=np.float16)
+        cast_std = np.array(std, dtype=np.float16)
+        expected_image = (image - cast_mean) / cast_std
+        normalized_image = normalize(image, mean=mean, std=std)
+        self.assertEqual(normalized_image.dtype, np.float16)
+        self.assertTrue(np.allclose(normalized_image, expected_image, atol=1e-6))
+
+        # Test int image input is converted to float32
+        image = np.random.randint(0, 2, (224, 224, 3), dtype=np.uint8)
+        mean = (0.5, 0.6, 0.7)
+        std = (0.1, 0.2, 0.3)
+        expected_image = (image.astype(np.float32) - mean) / std
+        normalized_image = normalize(image, mean=mean, std=std)
+        self.assertEqual(normalized_image.dtype, np.float32)
+        self.assertTrue(np.allclose(normalized_image, expected_image, atol=1e-6))
 
     def test_center_crop(self):
         image = np.random.randint(0, 256, (3, 224, 224))
@@ -335,6 +367,10 @@ class ImageTransformsTester(unittest.TestCase):
         self.assertIsInstance(cropped_image, np.ndarray)
         self.assertEqual(cropped_image.shape, (300, 260, 3))
         self.assertTrue(np.allclose(cropped_image, expected_image))
+
+        # Test that odd numbered padding requirement still leads to correct output dimensions
+        cropped_image = center_crop(image, (300, 259), data_format="channels_last")
+        self.assertEqual(cropped_image.shape, (300, 259, 3))
 
         # Test image with 4 channels is cropped correctly
         image = np.random.randint(0, 256, (224, 224, 4))
@@ -535,6 +571,25 @@ class ImageTransformsTester(unittest.TestCase):
             [[0, 0], [0, 1], [2, 3]],
             [[0, 0], [0, 0], [0, 0]],
         ])
+        # fmt: on
+        self.assertTrue(
+            np.allclose(
+                expected_image, pad(image, ((0, 1), (1, 0)), mode="constant", input_data_format="channels_last")
+            )
+        )
+
+        # Test that padding works on batched images
+        image = np.array(
+            [
+                [[0, 1], [2, 3]],
+            ]
+        )[None, ...]
+        expected_image = np.array(
+            [
+                [[0, 0], [0, 1], [2, 3]],
+                [[0, 0], [0, 0], [0, 0]],
+            ]
+        )[None, ...]
         # fmt: on
         self.assertTrue(
             np.allclose(

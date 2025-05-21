@@ -18,7 +18,6 @@ import shutil
 import tempfile
 import unittest
 
-import numpy as np
 import pytest
 
 from transformers import CLIPTokenizer, CLIPTokenizerFast
@@ -26,21 +25,21 @@ from transformers.models.clip.tokenization_clip import VOCAB_FILES_NAMES
 from transformers.testing_utils import require_vision
 from transformers.utils import IMAGE_PROCESSOR_NAME, is_vision_available
 
+from ...test_processing_common import ProcessorTesterMixin
+
 
 if is_vision_available():
-    from PIL import Image
-
     from transformers import CLIPSegProcessor, ViTImageProcessor
 
 
 @require_vision
-class CLIPSegProcessorTest(unittest.TestCase):
+class CLIPSegProcessorTest(ProcessorTesterMixin, unittest.TestCase):
+    processor_class = CLIPSegProcessor
+
     def setUp(self):
         self.tmpdirname = tempfile.mkdtemp()
 
-        # fmt: off
-        vocab = ["l", "o", "w", "e", "r", "s", "t", "i", "d", "n", "lo", "l</w>", "w</w>", "r</w>", "t</w>", "low</w>", "er</w>", "lowest</w>", "newer</w>", "wider", "<unk>", "<|startoftext|>", "<|endoftext|>"]
-        # fmt: on
+        vocab = ["l", "o", "w", "e", "r", "s", "t", "i", "d", "n", "lo", "l</w>", "w</w>", "r</w>", "t</w>", "low</w>", "er</w>", "lowest</w>", "newer</w>", "wider", "<unk>", "<|startoftext|>", "<|endoftext|>"]  # fmt: skip
         vocab_tokens = dict(zip(vocab, range(len(vocab))))
         merges = ["#version: 0.2", "l o", "lo w</w>", "e r</w>", ""]
         self.special_tokens_map = {"unk_token": "<unk>"}
@@ -76,16 +75,6 @@ class CLIPSegProcessorTest(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmpdirname)
-
-    def prepare_image_inputs(self):
-        """This function prepares a list of PIL images, or a list of numpy arrays if one specifies numpify=True,
-        or a list of PyTorch tensors if one specifies torchify=True."""
-
-        image_inputs = [np.random.randint(255, size=(3, 30, 400), dtype=np.uint8)]
-
-        image_inputs = [Image.fromarray(np.moveaxis(x, 0, -1)) for x in image_inputs]
-
-        return image_inputs
 
     def test_save_load_pretrained_default(self):
         tokenizer_slow = self.get_tokenizer()

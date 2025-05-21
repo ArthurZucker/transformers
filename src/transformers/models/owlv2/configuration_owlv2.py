@@ -12,10 +12,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" OWLv2 model configuration"""
+"""OWLv2 model configuration"""
 
-import os
-from typing import TYPE_CHECKING, Dict, Union
+from typing import TYPE_CHECKING, Dict
 
 
 if TYPE_CHECKING:
@@ -27,18 +26,14 @@ from ...utils import logging
 
 logger = logging.get_logger(__name__)
 
-OWLV2_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "google/owlv2-base-patch16": "https://huggingface.co/google/owlv2-base-patch16/resolve/main/config.json",
-}
 
-
-# Copied from transformers.models.owlvit.configuration_owlvit.OwlViTTextConfig with OwlViT->Owlv2, owlvit-base-patch-16->owlv2-base-patch16, owlvit->owlv2, OWL-ViT->OWLv2
+# Copied from transformers.models.owlvit.configuration_owlvit.OwlViTTextConfig with OwlViT->Owlv2, owlvit-base-patch32->owlv2-base-patch16, owlvit->owlv2, OWL-ViT->OWLv2
 class Owlv2TextConfig(PretrainedConfig):
     r"""
     This is the configuration class to store the configuration of an [`Owlv2TextModel`]. It is used to instantiate an
     Owlv2 text encoder according to the specified arguments, defining the model architecture. Instantiating a
     configuration with the defaults will yield a similar configuration to that of the Owlv2
-    [google/owlv2-base-patch32](https://huggingface.co/google/owlv2-base-patch32) architecture.
+    [google/owlv2-base-patch16](https://huggingface.co/google/owlv2-base-patch16) architecture.
 
     Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
     documentation from [`PretrainedConfig`] for more information.
@@ -46,8 +41,8 @@ class Owlv2TextConfig(PretrainedConfig):
 
     Args:
         vocab_size (`int`, *optional*, defaults to 49408):
-            Vocabulary size of the OWLv2 text model. Defines the number of different tokens that can be represented by
-            the `inputs_ids` passed when calling [`Owlv2TextModel`].
+            Vocabulary size of the OWLv2 text model. Defines the number of different tokens that can be represented
+            by the `inputs_ids` passed when calling [`Owlv2TextModel`].
         hidden_size (`int`, *optional*, defaults to 512):
             Dimensionality of the encoder layers and the pooler layer.
         intermediate_size (`int`, *optional*, defaults to 2048):
@@ -61,7 +56,7 @@ class Owlv2TextConfig(PretrainedConfig):
             just in case (e.g., 512 or 1024 or 2048).
         hidden_act (`str` or `function`, *optional*, defaults to `"quick_gelu"`):
             The non-linear activation function (function or string) in the encoder and pooler. If string, `"gelu"`,
-            `"relu"`, `"selu"` and `"gelu_new"` ``"quick_gelu"` are supported.
+            `"relu"`, `"selu"` and `"gelu_new"` `"quick_gelu"` are supported.
         layer_norm_eps (`float`, *optional*, defaults to 1e-05):
             The epsilon used by the layer normalization layers.
         attention_dropout (`float`, *optional*, defaults to 0.0):
@@ -83,16 +78,18 @@ class Owlv2TextConfig(PretrainedConfig):
     ```python
     >>> from transformers import Owlv2TextConfig, Owlv2TextModel
 
-    >>> # Initializing a Owlv2TextModel with google/owlv2-base-patch32 style configuration
+    >>> # Initializing a Owlv2TextModel with google/owlv2-base-patch16 style configuration
     >>> configuration = Owlv2TextConfig()
 
-    >>> # Initializing a Owlv2TextConfig from the google/owlv2-base-patch32 style configuration
+    >>> # Initializing a Owlv2TextConfig from the google/owlv2-base-patch16 style configuration
     >>> model = Owlv2TextModel(configuration)
 
     >>> # Accessing the model configuration
     >>> configuration = model.config
     ```"""
+
     model_type = "owlv2_text_model"
+    base_config_key = "text_config"
 
     def __init__(
         self,
@@ -126,32 +123,14 @@ class Owlv2TextConfig(PretrainedConfig):
         self.initializer_range = initializer_range
         self.initializer_factor = initializer_factor
 
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs) -> "PretrainedConfig":
-        cls._set_token_in_kwargs(kwargs)
 
-        config_dict, kwargs = cls.get_config_dict(pretrained_model_name_or_path, **kwargs)
-
-        # get the text config dict if we are loading from Owlv2Config
-        if config_dict.get("model_type") == "owlv2":
-            config_dict = config_dict["text_config"]
-
-        if "model_type" in config_dict and hasattr(cls, "model_type") and config_dict["model_type"] != cls.model_type:
-            logger.warning(
-                f"You are using a model of type {config_dict['model_type']} to instantiate a model of type "
-                f"{cls.model_type}. This is not supported for all configurations of models and can yield errors."
-            )
-
-        return cls.from_dict(config_dict, **kwargs)
-
-
-# Copied from transformers.models.owlvit.configuration_owlvit.OwlViTVisionConfig with OwlViT->Owlv2, owlvit-base-patch-32->owlv2-base-patch16, owlvit->owlv2, OWL-ViT->OWLv2
+# Copied from transformers.models.owlvit.configuration_owlvit.OwlViTVisionConfig with OwlViT->Owlv2, owlvit-base-patch32->owlv2-base-patch16, owlvit->owlv2, OWL-ViT->OWLv2, 32->16
 class Owlv2VisionConfig(PretrainedConfig):
     r"""
-    This is the configuration class to store the configuration of an [`Owlv2VisionModel`]. It is used to instantiate an
-    OWLv2 image encoder according to the specified arguments, defining the model architecture. Instantiating a
+    This is the configuration class to store the configuration of an [`Owlv2VisionModel`]. It is used to instantiate
+    an OWLv2 image encoder according to the specified arguments, defining the model architecture. Instantiating a
     configuration with the defaults will yield a similar configuration to that of the OWLv2
-    [google/owlv2-base-patch32](https://huggingface.co/google/owlv2-base-patch32) architecture.
+    [google/owlv2-base-patch16](https://huggingface.co/google/owlv2-base-patch16) architecture.
 
     Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
     documentation from [`PretrainedConfig`] for more information.
@@ -169,18 +148,18 @@ class Owlv2VisionConfig(PretrainedConfig):
             Number of channels in the input images.
         image_size (`int`, *optional*, defaults to 768):
             The size (resolution) of each image.
-        patch_size (`int`, *optional*, defaults to 32):
+        patch_size (`int`, *optional*, defaults to 16):
             The size (resolution) of each patch.
         hidden_act (`str` or `function`, *optional*, defaults to `"quick_gelu"`):
             The non-linear activation function (function or string) in the encoder and pooler. If string, `"gelu"`,
-            `"relu"`, `"selu"` and `"gelu_new"` ``"quick_gelu"` are supported.
+            `"relu"`, `"selu"` and `"gelu_new"` `"quick_gelu"` are supported.
         layer_norm_eps (`float`, *optional*, defaults to 1e-05):
             The epsilon used by the layer normalization layers.
         attention_dropout (`float`, *optional*, defaults to 0.0):
             The dropout ratio for the attention probabilities.
         initializer_range (`float`, *optional*, defaults to 0.02):
             The standard deviation of the truncated_normal_initializer for initializing all weight matrices.
-        initializer_factor (`float``, *optional*, defaults to 1.0):
+        initializer_factor (`float`, *optional*, defaults to 1.0):
             A factor for initializing all weight matrices (should be kept to 1, used internally for initialization
             testing).
 
@@ -189,10 +168,10 @@ class Owlv2VisionConfig(PretrainedConfig):
     ```python
     >>> from transformers import Owlv2VisionConfig, Owlv2VisionModel
 
-    >>> # Initializing a Owlv2VisionModel with google/owlv2-base-patch32 style configuration
+    >>> # Initializing a Owlv2VisionModel with google/owlv2-base-patch16 style configuration
     >>> configuration = Owlv2VisionConfig()
 
-    >>> # Initializing a Owlv2VisionModel model from the google/owlv2-base-patch32 style configuration
+    >>> # Initializing a Owlv2VisionModel model from the google/owlv2-base-patch16 style configuration
     >>> model = Owlv2VisionModel(configuration)
 
     >>> # Accessing the model configuration
@@ -200,6 +179,7 @@ class Owlv2VisionConfig(PretrainedConfig):
     ```"""
 
     model_type = "owlv2_vision_model"
+    base_config_key = "vision_config"
 
     def __init__(
         self,
@@ -209,7 +189,7 @@ class Owlv2VisionConfig(PretrainedConfig):
         num_attention_heads=12,
         num_channels=3,
         image_size=768,
-        patch_size=32,
+        patch_size=16,
         hidden_act="quick_gelu",
         layer_norm_eps=1e-5,
         attention_dropout=0.0,
@@ -232,32 +212,14 @@ class Owlv2VisionConfig(PretrainedConfig):
         self.initializer_range = initializer_range
         self.initializer_factor = initializer_factor
 
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs) -> "PretrainedConfig":
-        cls._set_token_in_kwargs(kwargs)
 
-        config_dict, kwargs = cls.get_config_dict(pretrained_model_name_or_path, **kwargs)
-
-        # get the vision config dict if we are loading from Owlv2Config
-        if config_dict.get("model_type") == "owlv2":
-            config_dict = config_dict["vision_config"]
-
-        if "model_type" in config_dict and hasattr(cls, "model_type") and config_dict["model_type"] != cls.model_type:
-            logger.warning(
-                f"You are using a model of type {config_dict['model_type']} to instantiate a model of type "
-                f"{cls.model_type}. This is not supported for all configurations of models and can yield errors."
-            )
-
-        return cls.from_dict(config_dict, **kwargs)
-
-
-# Copied from transformers.models.owlvit.configuration_owlvit.OwlViTConfig with OwlViT->Owlv2, owlvit-base-patch-32->owlv2-base-patch32, owlvit->owlv2, OWL-ViT->OWLv2
+# Copied from transformers.models.owlvit.configuration_owlvit.OwlViTConfig with OwlViT->Owlv2, owlvit-base-patch32->owlv2-base-patch16, owlvit->owlv2, OWL-ViT->OWLv2
 class Owlv2Config(PretrainedConfig):
     r"""
     [`Owlv2Config`] is the configuration class to store the configuration of an [`Owlv2Model`]. It is used to
-    instantiate an OWLv2 model according to the specified arguments, defining the text model and vision model configs.
-    Instantiating a configuration with the defaults will yield a similar configuration to that of the OWLv2
-    [google/owlv2-base-patch32](https://huggingface.co/google/owlv2-base-patch32) architecture.
+    instantiate an OWLv2 model according to the specified arguments, defining the text model and vision model
+    configs. Instantiating a configuration with the defaults will yield a similar configuration to that of the OWLv2
+    [google/owlv2-base-patch16](https://huggingface.co/google/owlv2-base-patch16) architecture.
 
     Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
     documentation from [`PretrainedConfig`] for more information.
@@ -270,7 +232,8 @@ class Owlv2Config(PretrainedConfig):
         projection_dim (`int`, *optional*, defaults to 512):
             Dimensionality of text and vision projection layers.
         logit_scale_init_value (`float`, *optional*, defaults to 2.6592):
-            The inital value of the *logit_scale* parameter. Default is used as per the original OWLv2 implementation.
+            The initial value of the *logit_scale* parameter. Default is used as per the original OWLv2
+            implementation.
         return_dict (`bool`, *optional*, defaults to `True`):
             Whether or not the model should return a dictionary. If `False`, returns a tuple.
         kwargs (*optional*):
@@ -278,6 +241,7 @@ class Owlv2Config(PretrainedConfig):
     """
 
     model_type = "owlv2"
+    sub_configs = {"text_config": Owlv2TextConfig, "vision_config": Owlv2VisionConfig}
 
     def __init__(
         self,
@@ -307,24 +271,10 @@ class Owlv2Config(PretrainedConfig):
         self.initializer_factor = 1.0
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs) -> "PretrainedConfig":
-        cls._set_token_in_kwargs(kwargs)
-
-        config_dict, kwargs = cls.get_config_dict(pretrained_model_name_or_path, **kwargs)
-
-        if "model_type" in config_dict and hasattr(cls, "model_type") and config_dict["model_type"] != cls.model_type:
-            logger.warning(
-                f"You are using a model of type {config_dict['model_type']} to instantiate a model of type "
-                f"{cls.model_type}. This is not supported for all configurations of models and can yield errors."
-            )
-
-        return cls.from_dict(config_dict, **kwargs)
-
-    @classmethod
     def from_text_vision_configs(cls, text_config: Dict, vision_config: Dict, **kwargs):
         r"""
-        Instantiate a [`Owlv2Config`] (or a derived class) from owlv2 text model configuration and owlv2 vision model
-        configuration.
+        Instantiate a [`Owlv2Config`] (or a derived class) from owlv2 text model configuration and owlv2 vision
+        model configuration.
 
         Returns:
             [`Owlv2Config`]: An instance of a configuration object
@@ -334,3 +284,6 @@ class Owlv2Config(PretrainedConfig):
         config_dict["vision_config"] = vision_config
 
         return cls.from_dict(config_dict, **kwargs)
+
+
+__all__ = ["Owlv2Config", "Owlv2TextConfig", "Owlv2VisionConfig"]

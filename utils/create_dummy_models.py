@@ -420,23 +420,51 @@ def get_tiny_config(config_class, model_class=None, **model_tester_kwargs):
         error = f"Tiny config not created for {model_type} - no model tester is found in the testing module."
         raise ValueError(error)
 
+    # CLIP-like models have `text_model_tester` and `vision_model_tester`, and we need to pass `vocab_size` to
+    # `text_model_tester` via `text_kwargs`. The same trick is also necessary for `Flava`.
+
+    if "vocab_size" in model_tester_kwargs:
+        if "text_kwargs" in inspect.signature(model_tester_class.__init__).parameters.keys():
+            vocab_size = model_tester_kwargs.pop("vocab_size")
+            model_tester_kwargs["text_kwargs"] = {"vocab_size": vocab_size}
+
     # `parent` is an instance of `unittest.TestCase`, but we don't need it here.
     model_tester = model_tester_class(parent=None, **model_tester_kwargs)
 
     if hasattr(model_tester, "get_pipeline_config"):
-        return model_tester.get_pipeline_config()
+        config = model_tester.get_pipeline_config()
     elif hasattr(model_tester, "prepare_config_and_inputs"):
         # `PoolFormer` has no `get_config` defined. Furthermore, it's better to use `prepare_config_and_inputs` even if
         # `get_config` is defined, since there might be some extra changes in `prepare_config_and_inputs`.
-        return model_tester.prepare_config_and_inputs()[0]
+        config = model_tester.prepare_config_and_inputs()[0]
     elif hasattr(model_tester, "get_config"):
-        return model_tester.get_config()
+        config = model_tester.get_config()
     else:
         error = (
             f"Tiny config not created for {model_type} - the model tester {model_tester_class.__name__} lacks"
             " necessary method to create config."
         )
         raise ValueError(error)
+
+    # make sure this is long enough (some model tester has `20` for this attr.) to pass `text-generation`
+    # pipeline tests.
+    max_positions = []
+    for key in ["max_position_embeddings", "max_source_positions", "max_target_positions"]:
+        if getattr(config, key, 0) > 0:
+            max_positions.append(getattr(config, key))
+        if getattr(config, "text_config", None) is not None:
+            if getattr(config.text_config, key, None) is not None:
+                max_positions.append(getattr(config.text_config, key))
+    if len(max_positions) > 0:
+        max_position = max(200, min(max_positions))
+        for key in ["max_position_embeddings", "max_source_positions", "max_target_positions"]:
+            if getattr(config, key, 0) > 0:
+                setattr(config, key, max_position)
+            if getattr(config, "text_config", None) is not None:
+                if getattr(config.text_config, key, None) is not None:
+                    setattr(config.text_config, key, max_position)
+
+    return config
 
 
 def convert_tokenizer(tokenizer_fast: PreTrainedTokenizerFast):
@@ -476,6 +504,27 @@ def convert_feature_extractor(feature_extractor, tiny_config):
     if to_convert:
         feature_extractor = feature_extractor.__class__(**kwargs)
 
+    # Sanity check: on tiny image feature extractors, a large image size results in slow CI -- up to the point where it
+    # can result in timeout issues.
+    if (
+        isinstance(feature_extractor, BaseImageProcessor)
+        and hasattr(feature_extractor, "size")
+        and isinstance(feature_extractor.size, dict)
+    ):
+        largest_image_size = max(feature_extractor.size.values())
+        if largest_image_size > 64:
+            # hardcoded exceptions
+            models_with_large_image_size = ("deformable_detr", "flava", "grounding_dino", "mgp_str", "swiftformer")
+            if any(model_name in tiny_config.model_type for model_name in models_with_large_image_size):
+                pass
+            else:
+                raise ValueError(
+                    f"Image size of {tiny_config.model_type} is too large ({feature_extractor.size}). "
+                    "Please reduce it to 64 or less on each dimension. The following steps are usually the "
+                    "easiest solution: 1) confirm that you're setting `image_size` in your ModelTester class; "
+                    "2) ensure that it gets passed to the tester config init, `get_config()`."
+                )
+
     return feature_extractor
 
 
@@ -498,14 +547,14 @@ def convert_processors(processors, tiny_config, output_folder, result):
         # sanity check 1: fast and slow tokenizers should be compatible (vocab_size)
         if fast_tokenizer is not None and slow_tokenizer is not None:
             if fast_tokenizer.vocab_size != slow_tokenizer.vocab_size:
-                warning_messagae = (
+                warning_message = (
                     "The fast/slow tokenizers "
                     f"({fast_tokenizer.__class__.__name__}/{slow_tokenizer.__class__.__name__}) have different "
                     "vocabulary size: "
                     f"fast_tokenizer.vocab_size = {fast_tokenizer.vocab_size} and "
                     f"slow_tokenizer.vocab_size = {slow_tokenizer.vocab_size}."
                 )
-                result["warnings"].append(warning_messagae)
+                result["warnings"].append(warning_message)
                 if not keep_fast_tokenizer:
                     fast_tokenizer = None
                 slow_tokenizer = None
@@ -513,12 +562,12 @@ def convert_processors(processors, tiny_config, output_folder, result):
         # sanity check 2: fast and slow tokenizers should be compatible (length)
         if fast_tokenizer is not None and slow_tokenizer is not None:
             if len(fast_tokenizer) != len(slow_tokenizer):
-                warning_messagae = (
+                warning_message = (
                     f"The fast/slow tokenizers () have different length: "
                     f"len(fast_tokenizer) = {len(fast_tokenizer)} and "
                     f"len(slow_tokenizer) = {len(slow_tokenizer)}."
                 )
-                result["warnings"].append(warning_messagae)
+                result["warnings"].append(warning_message)
                 if not keep_fast_tokenizer:
                     fast_tokenizer = None
                 slow_tokenizer = None
@@ -916,7 +965,7 @@ def build_composite_models(config_class, output_dir):
             model.save_pretrained(model_path)
 
             if tf_model_class is not None:
-                model = tf_model_class.from_pretrained(model_path, from_pt=True)
+                model = tf_model_class.from_pretrained(model_path)
                 model.save_pretrained(model_path)
 
             # copy the processors
@@ -1006,26 +1055,8 @@ def get_config_overrides(config_class, processors):
 
     # Used to create a new model tester with `tokenizer.vocab_size` in order to get the (updated) special token ids.
     model_tester_kwargs = {"vocab_size": vocab_size}
-    # CLIP-like models have `text_model_tester` and `vision_model_tester`, and we need to pass `vocab_size` to
-    # `text_model_tester` via `text_kwargs`. The same trick is also necessary for `Flava`.
-    if config_class.__name__ in [
-        "AlignConfig",
-        "AltCLIPConfig",
-        "ChineseCLIPConfig",
-        "CLIPSegConfig",
-        "ClapConfig",
-        "CLIPConfig",
-        "GroupViTConfig",
-        "OwlViTConfig",
-        "XCLIPConfig",
-        "FlavaConfig",
-        "BlipConfig",
-        "Blip2Config",
-    ]:
-        del model_tester_kwargs["vocab_size"]
-        model_tester_kwargs["text_kwargs"] = {"vocab_size": vocab_size}
     # `FSMTModelTester` accepts `src_vocab_size` and `tgt_vocab_size` but not `vocab_size`.
-    elif config_class.__name__ == "FSMTConfig":
+    if config_class.__name__ == "FSMTConfig":
         del model_tester_kwargs["vocab_size"]
         model_tester_kwargs["src_vocab_size"] = tokenizer.src_vocab_size
         model_tester_kwargs["tgt_vocab_size"] = tokenizer.tgt_vocab_size
@@ -1070,7 +1101,7 @@ def build(config_class, models_to_create, output_dir):
             it. Models in different frameworks with the same architecture will be saved in the same subdirectory.
     """
     if data["training_ds"] is None or data["testing_ds"] is None:
-        ds = load_dataset("wikitext", "wikitext-2-raw-v1")
+        ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1")
         data["training_ds"] = ds["train"]
         data["testing_ds"] = ds["test"]
 
@@ -1158,7 +1189,9 @@ def build(config_class, models_to_create, output_dir):
         if hasattr(tiny_config, k):
             setattr(tiny_config, k, v)
         # So far, we only have to deal with `text_config`, as `config_overrides` contains text-related attributes only.
-        elif (
+        # `FuyuConfig` saves data under both FuyuConfig and its `text_config`. This is not good, but let's just update
+        # every involved fields to avoid potential failure.
+        if (
             hasattr(tiny_config, "text_config")
             and tiny_config.text_config is not None
             and hasattr(tiny_config.text_config, k)
@@ -1204,7 +1237,7 @@ def build(config_class, models_to_create, output_dir):
             ckpt = get_checkpoint_dir(output_dir, pt_arch)
             # Use the same weights from PyTorch.
             try:
-                model = tensorflow_arch.from_pretrained(ckpt, from_pt=True)
+                model = tensorflow_arch.from_pretrained(ckpt)
                 model.save_pretrained(ckpt)
             except Exception as e:
                 # Conversion may fail. Let's not create a model with different weights to avoid confusion (for now).
@@ -1383,7 +1416,7 @@ def create_tiny_models(
         raise ValueError(f"This script should be run from the root of the clone of `transformers` {clone_path}")
 
     report_path = os.path.join(output_path, "reports")
-    os.makedirs(report_path)
+    os.makedirs(report_path, exist_ok=True)
 
     _pytorch_arch_mappings = [
         x

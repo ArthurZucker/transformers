@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2023 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,10 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Testing suite for the PyTorch EfficientNet model. """
+"""Testing suite for the PyTorch EfficientNet model."""
 
-
-import inspect
 import unittest
 
 from transformers import EfficientNetConfig
@@ -31,7 +28,6 @@ if is_torch_available():
     import torch
 
     from transformers import EfficientNetForImageClassification, EfficientNetModel
-    from transformers.models.efficientnet.modeling_efficientnet import EFFICIENTNET_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
 if is_vision_available():
@@ -86,6 +82,7 @@ class EfficientNetModelTester:
 
     def get_config(self):
         return EfficientNetConfig(
+            image_size=self.image_size,
             num_channels=self.num_channels,
             kernel_sizes=self.kernel_sizes,
             in_channels=self.in_channels,
@@ -131,7 +128,7 @@ class EfficientNetModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.Test
 
     all_model_classes = (EfficientNetModel, EfficientNetForImageClassification) if is_torch_available() else ()
     pipeline_model_mapping = (
-        {"feature-extraction": EfficientNetModel, "image-classification": EfficientNetForImageClassification}
+        {"image-feature-extraction": EfficientNetModel, "image-classification": EfficientNetForImageClassification}
         if is_torch_available()
         else {}
     )
@@ -141,48 +138,32 @@ class EfficientNetModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.Test
     test_resize_embeddings = False
     test_head_masking = False
     has_attentions = False
+    test_torch_exportable = True
 
     def setUp(self):
         self.model_tester = EfficientNetModelTester(self)
         self.config_tester = ConfigTester(
-            self, config_class=EfficientNetConfig, has_text_modality=False, hidden_size=37
+            self,
+            config_class=EfficientNetConfig,
+            has_text_modality=False,
+            hidden_size=37,
+            common_properties=["num_channels", "image_size", "hidden_dim"],
         )
 
     def test_config(self):
-        self.create_and_test_config_common_properties()
-        self.config_tester.create_and_test_config_to_json_string()
-        self.config_tester.create_and_test_config_to_json_file()
-        self.config_tester.create_and_test_config_from_and_save_pretrained()
-        self.config_tester.create_and_test_config_with_num_labels()
-        self.config_tester.check_config_can_be_init_without_params()
-        self.config_tester.check_config_arguments_init()
-
-    def create_and_test_config_common_properties(self):
-        return
+        self.config_tester.run_common_tests()
 
     @unittest.skip(reason="EfficientNet does not use inputs_embeds")
     def test_inputs_embeds(self):
         pass
 
     @unittest.skip(reason="EfficientNet does not support input and output embeddings")
-    def test_model_common_attributes(self):
+    def test_model_get_set_embeddings(self):
         pass
 
     @unittest.skip(reason="EfficientNet does not use feedforward chunking")
     def test_feed_forward_chunking(self):
         pass
-
-    def test_forward_signature(self):
-        config, _ = self.model_tester.prepare_config_and_inputs_for_common()
-
-        for model_class in self.all_model_classes:
-            model = model_class(config)
-            signature = inspect.signature(model.forward)
-            # signature.parameters is an OrderedDict => so arg_names order is deterministic
-            arg_names = [*signature.parameters.keys()]
-
-            expected_arg_names = ["pixel_values"]
-            self.assertListEqual(arg_names[:1], expected_arg_names)
 
     def test_model(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
@@ -225,9 +206,21 @@ class EfficientNetModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.Test
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in EFFICIENTNET_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = EfficientNetModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "google/efficientnet-b7"
+        model = EfficientNetModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
+
+    @is_pipeline_test
+    @require_vision
+    @slow
+    def test_pipeline_image_feature_extraction(self):
+        super().test_pipeline_image_feature_extraction()
+
+    @is_pipeline_test
+    @require_vision
+    @slow
+    def test_pipeline_image_feature_extraction_fp16(self):
+        super().test_pipeline_image_feature_extraction_fp16()
 
     @is_pipeline_test
     @require_vision
@@ -266,4 +259,4 @@ class EfficientNetModelIntegrationTest(unittest.TestCase):
         self.assertEqual(outputs.logits.shape, expected_shape)
 
         expected_slice = torch.tensor([-0.2962, 0.4487, 0.4499]).to(torch_device)
-        self.assertTrue(torch.allclose(outputs.logits[0, :3], expected_slice, atol=1e-4))
+        torch.testing.assert_close(outputs.logits[0, :3], expected_slice, rtol=1e-4, atol=1e-4)

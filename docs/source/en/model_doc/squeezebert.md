@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # SqueezeBERT
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The SqueezeBERT model was proposed in [SqueezeBERT: What can computer vision teach NLP about efficient neural networks?](https://arxiv.org/abs/2006.11316) by Forrest N. Iandola, Albert E. Shaw, Ravi Krishna, Kurt W. Keutzer. It's a
@@ -38,7 +42,9 @@ self-attention layers with grouped convolutions, and we use this technique in a 
 SqueezeBERT, which runs 4.3x faster than BERT-base on the Pixel 3 while achieving competitive accuracy on the GLUE test
 set. The SqueezeBERT code will be released.*
 
-Tips:
+This model was contributed by [forresti](https://huggingface.co/forresti).
+
+## Usage tips
 
 - SqueezeBERT is a model with absolute position embeddings so it's usually advised to pad the inputs on the right
   rather than the left.
@@ -48,9 +54,7 @@ Tips:
 - For best results when finetuning on sequence classification tasks, it is recommended to start with the
   *squeezebert/squeezebert-mnli-headless* checkpoint.
 
-This model was contributed by [forresti](https://huggingface.co/forresti).
-
-## Documentation resources
+## Resources
 
 - [Text classification task guide](../tasks/sequence_classification)
 - [Token classification task guide](../tasks/token_classification)

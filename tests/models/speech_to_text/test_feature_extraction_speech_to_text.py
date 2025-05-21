@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2021 HuggingFace Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,19 +14,18 @@
 
 
 import itertools
+import os
 import random
+import tempfile
 import unittest
 
 import numpy as np
 
-from transformers import is_speech_available
-from transformers.testing_utils import require_torch, require_torchaudio
+from transformers import Speech2TextFeatureExtractor
+from transformers.testing_utils import check_json_file_has_correct_format, require_torch, require_torchaudio
 
 from ...test_sequence_feature_extraction_common import SequenceFeatureExtractionTestMixin
 
-
-if is_speech_available():
-    from transformers import Speech2TextFeatureExtractor
 
 global_rng = random.Random()
 
@@ -49,7 +47,7 @@ def floats_list(shape, scale=1.0, rng=None, name=None):
 
 @require_torch
 @require_torchaudio
-class Speech2TextFeatureExtractionTester(unittest.TestCase):
+class Speech2TextFeatureExtractionTester:
     def __init__(
         self,
         parent,
@@ -105,7 +103,7 @@ class Speech2TextFeatureExtractionTester(unittest.TestCase):
 @require_torch
 @require_torchaudio
 class Speech2TextFeatureExtractionTest(SequenceFeatureExtractionTestMixin, unittest.TestCase):
-    feature_extraction_class = Speech2TextFeatureExtractor if is_speech_available() else None
+    feature_extraction_class = Speech2TextFeatureExtractor
 
     def setUp(self):
         self.feat_extract_tester = Speech2TextFeatureExtractionTester(self)
@@ -144,6 +142,40 @@ class Speech2TextFeatureExtractionTest(SequenceFeatureExtractionTestMixin, unitt
         encoded_sequences_2 = feature_extractor(np_speech_inputs, return_tensors="np").input_features
         for enc_seq_1, enc_seq_2 in zip(encoded_sequences_1, encoded_sequences_2):
             self.assertTrue(np.allclose(enc_seq_1, enc_seq_2, atol=1e-3))
+
+    def test_dither(self):
+        np.random.seed(42)  # seed the dithering randn()
+
+        # Tests that features with and without little dithering are similar, but not the same
+        dict_no_dither = self.feat_extract_tester.prepare_feat_extract_dict()
+        dict_no_dither["dither"] = 0.0
+
+        dict_dither = self.feat_extract_tester.prepare_feat_extract_dict()
+        dict_dither["dither"] = 1.0
+
+        feature_extractor_no_dither = self.feature_extraction_class(**dict_no_dither)
+        feature_extractor_dither = self.feature_extraction_class(**dict_dither)
+
+        # create three inputs of length 800, 1000, and 1200
+        speech_inputs = [floats_list((1, x))[0] for x in range(800, 1400, 200)]
+        np_speech_inputs = [np.asarray(speech_input) for speech_input in speech_inputs]
+
+        # compute features
+        input_features_no_dither = feature_extractor_no_dither(
+            np_speech_inputs, padding=True, return_tensors="np", sampling_rate=dict_no_dither["sampling_rate"]
+        ).input_features
+        input_features_dither = feature_extractor_dither(
+            np_speech_inputs, padding=True, return_tensors="np", sampling_rate=dict_dither["sampling_rate"]
+        ).input_features
+
+        # test there is a difference between features (there's added noise to input signal)
+        diff = input_features_dither - input_features_no_dither
+
+        # features are not identical
+        self.assertTrue(np.abs(diff).mean() > 1e-5)
+        # features are not too different
+        self.assertTrue(np.abs(diff).mean() <= 1e-3)
+        self.assertTrue(np.abs(diff).max() <= 5e-2)
 
     def test_cepstral_mean_and_variance_normalization(self):
         feature_extractor = self.feature_extraction_class(**self.feat_extract_tester.prepare_feat_extract_dict())
@@ -278,5 +310,47 @@ class Speech2TextFeatureExtractionTest(SequenceFeatureExtractionTestMixin, unitt
         input_speech = self._load_datasamples(1)
         feature_extractor = self.feature_extraction_class(**self.feat_extract_tester.prepare_feat_extract_dict())
         input_features = feature_extractor(input_speech, return_tensors="pt").input_features
-        self.assertEquals(input_features.shape, (1, 584, 24))
+        self.assertEqual(input_features.shape, (1, 584, 24))
         self.assertTrue(np.allclose(input_features[0, 0, :30], expected, atol=1e-4))
+
+    def test_feat_extract_from_and_save_pretrained(self):
+        feat_extract_first = self.feature_extraction_class(**self.feat_extract_dict)
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            saved_file = feat_extract_first.save_pretrained(tmpdirname)[0]
+            check_json_file_has_correct_format(saved_file)
+            feat_extract_second = self.feature_extraction_class.from_pretrained(tmpdirname)
+
+        dict_first = feat_extract_first.to_dict()
+        dict_second = feat_extract_second.to_dict()
+        self.assertDictEqual(dict_first, dict_second)
+
+    def test_feat_extract_to_json_file(self):
+        feat_extract_first = self.feature_extraction_class(**self.feat_extract_dict)
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            json_file_path = os.path.join(tmpdirname, "feat_extract.json")
+            feat_extract_first.to_json_file(json_file_path)
+            feat_extract_second = self.feature_extraction_class.from_json_file(json_file_path)
+
+        dict_first = feat_extract_first.to_dict()
+        dict_second = feat_extract_second.to_dict()
+        self.assertEqual(dict_first, dict_second)
+
+
+# exact same tests than before, except that we simulate that torchaudio is not available
+@require_torch
+@unittest.mock.patch(
+    "transformers.models.speech_to_text.feature_extraction_speech_to_text.is_speech_available", lambda: False
+)
+class Speech2TextFeatureExtractionWithoutTorchaudioTest(Speech2TextFeatureExtractionTest):
+    def test_using_audio_utils(self):
+        # Tests that it uses audio_utils instead of torchaudio
+        feat_extract = self.feature_extraction_class(**self.feat_extract_tester.prepare_feat_extract_dict())
+
+        self.assertTrue(hasattr(feat_extract, "window"))
+        self.assertTrue(hasattr(feat_extract, "mel_filters"))
+
+        from transformers.models.speech_to_text.feature_extraction_speech_to_text import is_speech_available
+
+        self.assertFalse(is_speech_available())

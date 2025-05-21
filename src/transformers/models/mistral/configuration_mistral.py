@@ -12,18 +12,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Mistral model configuration"""
+"""Mistral model configuration"""
 
 from ...configuration_utils import PretrainedConfig
 from ...utils import logging
 
 
 logger = logging.get_logger(__name__)
-
-MISTRAL_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "mistralai/Mistral-7B-v0.1": "https://huggingface.co/mistralai/Mistral-7B-v0.1/resolve/main/config.json",
-    "mistralai/Mistral-7B-Instruct-v0.1": "https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1/resolve/main/config.json",
-}
 
 
 class MistralConfig(PretrainedConfig):
@@ -54,10 +49,12 @@ class MistralConfig(PretrainedConfig):
         num_key_value_heads (`int`, *optional*, defaults to 8):
             This is the number of key_value heads that should be used to implement Grouped Query Attention. If
             `num_key_value_heads=num_attention_heads`, the model will use Multi Head Attention (MHA), if
-            `num_key_value_heads=1 the model will use Multi Query Attention (MQA) otherwise GQA is used. When
+            `num_key_value_heads=1` the model will use Multi Query Attention (MQA) otherwise GQA is used. When
             converting a multi-head checkpoint to a GQA checkpoint, each group key and value head should be constructed
             by meanpooling all the original heads within that group. For more details checkout [this
             paper](https://arxiv.org/pdf/2305.13245.pdf). If it is not specified, will default to `8`.
+        head_dim (`int`, *optional*, defaults to `hidden_size // num_attention_heads`):
+            The attention head dimension.
         hidden_act (`str` or `function`, *optional*, defaults to `"silu"`):
             The non-linear activation function (function or string) in the decoder.
         max_position_embeddings (`int`, *optional*, defaults to `4096*32`):
@@ -82,7 +79,8 @@ class MistralConfig(PretrainedConfig):
             The base period of the RoPE embeddings.
         sliding_window (`int`, *optional*, defaults to 4096):
             Sliding window attention window size. If not specified, will default to `4096`.
-
+        attention_dropout (`float`, *optional*, defaults to 0.0):
+            The dropout ratio for the attention probabilities.
 
     ```python
     >>> from transformers import MistralModel, MistralConfig
@@ -99,6 +97,21 @@ class MistralConfig(PretrainedConfig):
 
     model_type = "mistral"
     keys_to_ignore_at_inference = ["past_key_values"]
+    # Default tensor parallel plan for base model `MistralModel`
+    base_model_tp_plan = {
+        "layers.*.self_attn.q_proj": "colwise",
+        "layers.*.self_attn.k_proj": "colwise",
+        "layers.*.self_attn.v_proj": "colwise",
+        "layers.*.self_attn.o_proj": "rowwise",
+        "layers.*.mlp.gate_proj": "colwise",
+        "layers.*.mlp.up_proj": "colwise",
+        "layers.*.mlp.down_proj": "rowwise",
+    }
+    base_model_pp_plan = {
+        "embed_tokens": (["input_ids"], ["inputs_embeds"]),
+        "layers": (["hidden_states", "attention_mask"], ["hidden_states"]),
+        "norm": (["hidden_states"], ["hidden_states"]),
+    }
 
     def __init__(
         self,
@@ -108,6 +121,7 @@ class MistralConfig(PretrainedConfig):
         num_hidden_layers=32,
         num_attention_heads=32,
         num_key_value_heads=8,
+        head_dim=None,
         hidden_act="silu",
         max_position_embeddings=4096 * 32,
         initializer_range=0.02,
@@ -119,6 +133,7 @@ class MistralConfig(PretrainedConfig):
         tie_word_embeddings=False,
         rope_theta=10000.0,
         sliding_window=4096,
+        attention_dropout=0.0,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -128,6 +143,7 @@ class MistralConfig(PretrainedConfig):
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.sliding_window = sliding_window
+        self.head_dim = head_dim
 
         # for backward compatibility
         if num_key_value_heads is None:
@@ -139,6 +155,7 @@ class MistralConfig(PretrainedConfig):
         self.rms_norm_eps = rms_norm_eps
         self.use_cache = use_cache
         self.rope_theta = rope_theta
+        self.attention_dropout = attention_dropout
 
         super().__init__(
             pad_token_id=pad_token_id,
@@ -147,3 +164,6 @@ class MistralConfig(PretrainedConfig):
             tie_word_embeddings=tie_word_embeddings,
             **kwargs,
         )
+
+
+__all__ = ["MistralConfig"]

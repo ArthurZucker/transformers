@@ -47,9 +47,10 @@ REGNET_START_DOCSTRING = r"""
     This model inherits from [`FlaxPreTrainedModel`]. Check the superclass documentation for the generic methods the
     library implements for all its model (such as downloading, saving and converting weights from PyTorch models)
 
-    This model is also a Flax Linen [flax.linen.Module](https://flax.readthedocs.io/en/latest/flax.linen.html#module)
-    subclass. Use it as a regular Flax linen Module and refer to the Flax documentation for all matter related to
-    general usage and behavior.
+    This model is also a
+    [flax.linen.Module](https://flax.readthedocs.io/en/latest/api_reference/flax.linen/module.html) subclass. Use it as
+    a regular Flax linen Module and refer to the Flax documentation for all matter related to general usage and
+    behavior.
 
     Finally, this model supports inherent JAX features such as:
 
@@ -597,7 +598,7 @@ class FlaxRegNetPreTrainedModel(FlaxPreTrainedModel):
     def __call__(
         self,
         pixel_values,
-        params: dict = None,
+        params: Optional[dict] = None,
         train: bool = False,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
@@ -622,7 +623,7 @@ class FlaxRegNetPreTrainedModel(FlaxPreTrainedModel):
             output_hidden_states,
             return_dict,
             rngs=rngs,
-            mutable=["batch_stats"] if train else False,  # Returing tuple with batch_stats only when train is True
+            mutable=["batch_stats"] if train else False,  # Returning tuple with batch_stats only when train is True
         )
 
 
@@ -816,3 +817,6 @@ append_replace_return_docstrings(
     output_type=FlaxImageClassifierOutputWithNoAttention,
     config_class=RegNetConfig,
 )
+
+
+__all__ = ["FlaxRegNetForImageClassification", "FlaxRegNetModel", "FlaxRegNetPreTrainedModel"]

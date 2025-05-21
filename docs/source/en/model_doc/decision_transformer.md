@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # Decision Transformer
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The Decision Transformer model was proposed in [Decision Transformer: Reinforcement Learning via Sequence Modeling](https://arxiv.org/abs/2106.01345)  
@@ -33,9 +37,7 @@ This allows us to draw upon the simplicity and scalability of the Transformer ar
  Decision Transformer matches or exceeds the performance of state-of-the-art model-free offline RL baselines on 
  Atari, OpenAI Gym, and Key-to-Door tasks.*
 
-Tips:
-
-This version of the model is for tasks where the state is a vector, image-based states will come soon.
+This version of the model is for tasks where the state is a vector.
 
 This model was contributed by [edbeeching](https://huggingface.co/edbeeching). The original code can be found [here](https://github.com/kzl/decision-transformer).
 

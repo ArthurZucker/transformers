@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" MusicGen model configuration"""
+"""MusicGen model configuration"""
 
 from ...configuration_utils import PretrainedConfig
 from ...utils import logging
@@ -20,11 +20,6 @@ from ..auto.configuration_auto import AutoConfig
 
 
 logger = logging.get_logger(__name__)
-
-MUSICGEN_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "facebook/musicgen-small": "https://huggingface.co/facebook/musicgen-small/resolve/main/config.json",
-    # See all Musicgen models at https://huggingface.co/models?filter=musicgen
-}
 
 
 class MusicgenDecoderConfig(PretrainedConfig):
@@ -75,8 +70,13 @@ class MusicgenDecoderConfig(PretrainedConfig):
             The number of parallel codebooks forwarded to the model.
         tie_word_embeddings(`bool`, *optional*, defaults to `False`):
             Whether input and output word embeddings should be tied.
+        audio_channels (`int`, *optional*, defaults to 1
+            Number of channels in the audio data. Either 1 for mono or 2 for stereo. Stereo models generate a separate
+            audio stream for the left/right output channels. Mono models generate a single audio stream output.
     """
+
     model_type = "musicgen_decoder"
+    base_config_key = "decoder_config"
     keys_to_ignore_at_inference = ["past_key_values"]
 
     def __init__(
@@ -96,6 +96,7 @@ class MusicgenDecoderConfig(PretrainedConfig):
         initializer_factor=0.02,
         scale_embedding=False,
         num_codebooks=4,
+        audio_channels=1,
         pad_token_id=2048,
         bos_token_id=2048,
         eos_token_id=None,
@@ -117,6 +118,11 @@ class MusicgenDecoderConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.scale_embedding = scale_embedding  # scale factor will be sqrt(d_model) if True
         self.num_codebooks = num_codebooks
+
+        if audio_channels not in [1, 2]:
+            raise ValueError(f"Expected 1 (mono) or 2 (stereo) audio channels, got {audio_channels} channels.")
+        self.audio_channels = audio_channels
+
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,
@@ -184,7 +190,12 @@ class MusicgenConfig(PretrainedConfig):
     ```"""
 
     model_type = "musicgen"
-    is_composition = True
+    sub_configs = {
+        "text_encoder": AutoConfig,
+        "audio_encoder": AutoConfig,
+        "decoder": MusicgenDecoderConfig,
+    }
+    has_no_defaults_at_init = True
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -231,3 +242,6 @@ class MusicgenConfig(PretrainedConfig):
     # This is a property because you might want to change the codec model on the fly
     def sampling_rate(self):
         return self.audio_encoder.sampling_rate
+
+
+__all__ = ["MusicgenConfig", "MusicgenDecoderConfig"]

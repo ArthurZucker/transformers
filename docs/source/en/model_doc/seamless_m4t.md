@@ -12,9 +12,15 @@ specific language governing permissions and limitations under the License.
 
 # SeamlessM4T
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The SeamlessM4T model was proposed in [SeamlessM4T — Massively Multilingual & Multimodal Machine Translation](https://dl.fbaipublicfiles.com/seamless/seamless_m4t_paper.pdf) by the Seamless Communication team from Meta AI.
+
+This is the **version 1** release of the model. For the updated **version 2** release, refer to the [Seamless M4T v2 docs](https://huggingface.co/docs/transformers/main/model_doc/seamless_m4t_v2).
 
 SeamlessM4T is a collection of models designed to provide high quality translation, allowing people from different linguistic communities to communicate effortlessly through speech and text.
 
@@ -50,7 +56,7 @@ Here is how to use the processor to process text and audio:
 ```python
 >>> # let's load an audio sample from an Arabic speech corpus
 >>> from datasets import load_dataset
->>> dataset = load_dataset("arabic_speech_corpus", split="test", streaming=True)
+>>> dataset = load_dataset("arabic_speech_corpus", split="test", streaming=True, trust_remote_code=True)
 >>> audio_sample = next(iter(dataset))["audio"]
 
 >>> # now, process it

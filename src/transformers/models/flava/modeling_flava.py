@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch FLAVA model."""
+"""PyTorch FLAVA model."""
 
 import collections
 import math
@@ -27,14 +27,7 @@ from torch import nn
 from ...activations import ACT2FN
 from ...modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling
 from ...modeling_utils import PreTrainedModel, find_pruneable_heads_and_indices, prune_linear_layer
-from ...utils import (
-    ModelOutput,
-    add_code_sample_docstrings,
-    add_start_docstrings,
-    add_start_docstrings_to_model_forward,
-    logging,
-    replace_return_docstrings,
-)
+from ...utils import ModelOutput, auto_docstring, logging, torch_int
 from .configuration_flava import (
     FlavaConfig,
     FlavaImageCodebookConfig,
@@ -46,20 +39,8 @@ from .configuration_flava import (
 
 logger = logging.get_logger(__name__)
 
-_CHECKPOINT_FOR_DOC = "facebook/flava-full"
-
-# Codebook docstring
 _CHECKPOINT_FOR_CODEBOOK_DOC = "facebook/flava-image-codebook"
-_CONFIG_CLASS_FOR_IMAGE_MODEL_DOC = "FlavaImageConfig"
-_CONFIG_CLASS_FOR_TEXT_MODEL_DOC = "FlavaTextConfig"
-_CONFIG_CLASS_FOR_MULTIMODAL_MODEL_DOC = "FlavaMultimodalConfig"
-_EXPECTED_IMAGE_OUTPUT_SHAPE = [1, 197, 768]
 
-FLAVA_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "facebook/flava-full",
-    # See all flava models at https://huggingface.co/models?filter=flava
-]
-FLAVA_CODEBOOK_PRETRAINED_MODEL_ARCHIVE_LIST = ["facebook/flava-image-codebook"]
 LOGIT_SCALE_CLAMP_MIN = 0
 LOGIT_SCALE_CLAMP_MAX = 4.6052
 
@@ -180,7 +161,7 @@ class FlavaForPreTrainingOutput(ModelOutput):
             The output of the [`FlavaTextModel`].
         multimodal_masked_embeddings (`torch.FloatTensor` of shape `(batch_size, output_dim)`, *optional*, returned when `input_ids` and `pixel_values` are present):
             The multimodal embeddings which are basically the pooled output of [`FlavaTextModel`].
-        multimodal_masked_output (`BaseModelOutputWithPooling`, returned when `input_ids_masked` and `pixel_values` are present):
+        multimodal_masked_output (`BaseModelOutputWithPooling`, *optional*, returned when `input_ids_masked` and `pixel_values` are present):
             The output of the [`FlavaMultimodalModel`].
 
         mim_logits (`torch.FloatTensor` of shape `(batch_size, num_image_patches, image_vocab_size)` or of shape `(total_masked_patches, image_vocab_size)` , *optional*, returned when `pixel_values` are present and `input_ids_masked` are not):
@@ -263,42 +244,49 @@ class FlavaImageEmbeddings(nn.Module):
         num_patches = self.patch_embeddings.num_patches
         self.position_embeddings = nn.Parameter(torch.zeros(1, num_patches + 1, config.hidden_size))
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.patch_size = config.patch_size
         self.config = config
 
+    # Copied from transformers.models.vit.modeling_vit.ViTEmbeddings.interpolate_pos_encoding
     def interpolate_pos_encoding(self, embeddings: torch.Tensor, height: int, width: int) -> torch.Tensor:
         """
-        This method allows to interpolate the pre-trained position encodings, to be able to use the model on higher
-        resolution images.
+        This method allows to interpolate the pre-trained position encodings, to be able to use the model on higher resolution
+        images. This method is also adapted to support torch.jit tracing.
 
-        Source:
-        https://github.com/facebookresearch/dino/blob/de9ee3df6cf39fac952ab558447af1fa1365362a/image_transformer.py#L174
+        Adapted from:
+        - https://github.com/facebookresearch/dino/blob/de9ee3df6cf39fac952ab558447af1fa1365362a/vision_transformer.py#L174-L194, and
+        - https://github.com/facebookresearch/dinov2/blob/e1277af2ba9496fbadf7aec6eba56e8d882d1e35/dinov2/models/vision_transformer.py#L179-L211
         """
 
-        npatch = embeddings.shape[1] - 1
-        num_pos = self.position_embeddings.shape[1] - 1
-        if npatch == num_pos and height == width:
+        num_patches = embeddings.shape[1] - 1
+        num_positions = self.position_embeddings.shape[1] - 1
+
+        # always interpolate when tracing to ensure the exported model works for dynamic input shapes
+        if not torch.jit.is_tracing() and num_patches == num_positions and height == width:
             return self.position_embeddings
-        class_pos_embed = self.position_embeddings[:, 0]
+
+        class_pos_embed = self.position_embeddings[:, :1]
         patch_pos_embed = self.position_embeddings[:, 1:]
+
         dim = embeddings.shape[-1]
-        num_h_patches = height // self.config.patch_size
-        num_w_patches = width // self.config.patch_size
-        # we add a small number to avoid floating point error in the interpolation
-        # see discussion at https://github.com/facebookresearch/dino/issues/8
-        num_h_patches, num_w_patches = num_h_patches + 0.1, num_w_patches + 0.1
+
+        new_height = height // self.patch_size
+        new_width = width // self.patch_size
+
+        sqrt_num_positions = torch_int(num_positions**0.5)
+        patch_pos_embed = patch_pos_embed.reshape(1, sqrt_num_positions, sqrt_num_positions, dim)
+        patch_pos_embed = patch_pos_embed.permute(0, 3, 1, 2)
+
         patch_pos_embed = nn.functional.interpolate(
-            patch_pos_embed.reshape(1, int(math.sqrt(num_pos)), int(math.sqrt(num_pos)), dim).permute(0, 3, 1, 2),
-            scale_factor=(num_h_patches / math.sqrt(num_pos), num_w_patches / math.sqrt(num_pos)),
+            patch_pos_embed,
+            size=(new_height, new_width),
             mode="bicubic",
             align_corners=False,
         )
-        if int(num_h_patches) != patch_pos_embed.shape[-2] or int(num_w_patches) != patch_pos_embed.shape[-1]:
-            raise ValueError(
-                f"Number of patches for images ({int(num_h_patches), int(num_w_patches)}) don't match the "
-                f"shape of position embedding ({patch_pos_embed.shape[-2], patch_pos_embed.shape[-1]})"
-            )
+
         patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
-        return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
+
+        return torch.cat((class_pos_embed, patch_pos_embed), dim=1)
 
     def forward(
         self,
@@ -434,7 +422,7 @@ class FlavaSelfAttention(nn.Module):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
             raise ValueError(
-                f"The hidden size {config.hidden_size,} is not a multiple of the number of attention "
+                f"The hidden size {config.hidden_size} is not a multiple of the number of attention "
                 f"heads {config.num_attention_heads}."
             )
 
@@ -474,8 +462,6 @@ class FlavaSelfAttention(nn.Module):
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
             attention_scores = attention_scores + attention_mask
 
-        # Normalize the attention scores to probabilities.
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
         # Normalize the attention scores to probabilities.
         attention_probs = nn.functional.softmax(attention_scores, dim=-1)
 
@@ -602,7 +588,7 @@ class FlavaLayer(nn.Module):
         self.intermediate = FlavaIntermediate(config)
         self.output = FlavaOutput(config)
 
-        # TODO: Check fp32 layer norm possiblity
+        # TODO: Check fp32 layer norm possibility
         self.layernorm_before = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.layernorm_after = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 
@@ -663,7 +649,7 @@ class FlavaEncoder(nn.Module):
             layer_head_mask = head_mask[i] if head_mask is not None else None
 
             if self.gradient_checkpointing and self.training:
-                layer_outputs = self.gradient_checkpointing_func(
+                layer_outputs = self._gradient_checkpointing_func(
                     layer_module.__call__,
                     hidden_states,
                     attention_mask,
@@ -703,156 +689,8 @@ class FlavaPooler(nn.Module):
         return pooled_output
 
 
-FLAVA_START_DOCSTRING = r"""
-    This model is a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass. Use it
-    as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage and
-    behavior.
-
-    Parameters:
-        config ([`{config}`]): Model configuration class with all the parameters of the model.
-            Initializing with a config file does not load the weights associated with the model, only the
-            configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
-"""
-
-FLAVA_INPUTS_DOCSTRING_COMMON = r"""
-        attention_mask (`torch.FloatTensor` of shape `({0})`, *optional*):
-            Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
-            - 1 for tokens that are **not masked**,
-            - 0 for tokens that are **masked**.
-            [What are attention masks?](../glossary#attention-mask)
-
-        head_mask (`torch.FloatTensor` of shape `(num_heads,)` or `(num_layers, num_heads)`, *optional*):
-            Mask to nullify selected heads of the self-attention modules. Mask values selected in `[0, 1]`:
-
-            - 1 indicates the head is **not masked**,
-            - 0 indicates the head is **masked**.
-
-        output_attentions (`bool`, *optional*):
-            Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
-            tensors for more detail.
-        output_hidden_states (`bool`, *optional*):
-            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
-            more detail.
-
-        return_dict (`bool`, *optional*):
-            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-"""
-
-FLAVA_IMAGE_INPUTS_DOCSTRING_BASE = r"""
-    Args:
-        pixel_values (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)`):
-            Pixel values. Pixel values can be obtained using [`AutoImageProcessor`]. See
-            [`FlavaImageProcessor.__call__`] for details.
-
-        bool_masked_pos (`torch.BoolTensor` of shape `(batch_size, image_num_patches)`):
-            Boolean masked positions. Indicates which patches are masked (1) and which aren't (0).
-
-        interpolate_pos_encoding (`bool`, *optional*):
-            Whether to interpolate the pre-trained position encodings.
-"""
-
-FLAVA_IMAGE_INPUTS_DOCSTRING = FLAVA_IMAGE_INPUTS_DOCSTRING_BASE + FLAVA_INPUTS_DOCSTRING_COMMON
-
-FLAVA_TEXT_INPUTS_DOCSTRING_BASE = r"""
-    Args:
-        input_ids (`torch.LongTensor` of shape `({0})`):
-            Indices of input sequence tokens in the vocabulary. Indices can be obtained using [`AutoTokenizer`]. See
-            [`PreTrainedTokenizer.encode`] and [`PreTrainedTokenizer.__call__`] for details. [What are input
-            IDs?](../glossary#input-ids)
-
-        token_type_ids (`torch.LongTensor` of shape `({0})`, *optional*):
-            Segment token indices to indicate first and second portions of the inputs. Indices are selected in `[0,
-            1]`:
-            - 0 corresponds to a *sentence A* token,
-            - 1 corresponds to a *sentence B* token.
-            [What are token type IDs?](../glossary#token-type-ids)
-"""
-
-FLAVA_TEXT_INPUTS_DOCSTRING = FLAVA_TEXT_INPUTS_DOCSTRING_BASE + FLAVA_INPUTS_DOCSTRING_COMMON
-
-FLAVA_MULTIMODAL_INPUTS_DOCSTRING = (
-    r"""
-    Args:
-        hidden_states (`torch.FloatTensor` of shape `(batch_size, image_num_patches + text_seq_len, hidden_size)`):
-            The concatenated hidden states of unimodal encoders.
-"""
-    + FLAVA_INPUTS_DOCSTRING_COMMON
-)
-
-FLAVA_MODEL_INPUTS_DOCSTRING_BASE = r"""
-    Args:
-        skip_multimodal_encoder (*bool*, *optional*):
-            Skip any calculations for multimodal encoder. Useful if multimodal encoding is not going to be used.
-"""
-
-FLAVA_MODEL_INPUTS_DOCSTRING = (
-    FLAVA_IMAGE_INPUTS_DOCSTRING_BASE
-    + FLAVA_TEXT_INPUTS_DOCSTRING_BASE
-    + FLAVA_INPUTS_DOCSTRING_COMMON
-    + FLAVA_MODEL_INPUTS_DOCSTRING_BASE
-)
-
-
-FLAVA_PRETRAINING_INPUTS_DOCSTRING = (
-    r"""
-    Args:
-        input_ids_masked (`torch.LongTensor` of shape `({0})`):
-            Indices of input sequence tokens in the vocabulary. These ones are the masked version of the original task
-            to be used with MLM. Indices can be obtained using [`AutoTokenizer`] along with
-            [`DataCollatorForMaskedLanguageModeling`]. See [`PreTrainedTokenizer.encode`] and
-            [`PreTrainedTokenizer.__call__`] for details. [What are input IDs?](../glossary#input-ids)
-
-"""
-    + FLAVA_TEXT_INPUTS_DOCSTRING_BASE
-    + FLAVA_IMAGE_INPUTS_DOCSTRING_BASE
-    + r"""
-        image_attention_mask (`torch.FloatTensor` of shape `({1})`, *optional*):
-            Mask to avoid performing attention on padding token indices specifically for images. Mask values selected
-            in `[0, 1]`:
-            - 1 for tokens that are **not masked**,
-            - 0 for tokens that are **masked**.
-            [What are attention masks?](../glossary#attention-mask)
-
-        skip_unmasked_multimodal_encoder (*bool*, *optional*):
-            Skip any calculations for multimodal encoder for unmasked inputs. FLAVA pretraining doesn't need unmasked
-            multimodal embeddings or outputs as of now.
-
-        mlm_labels (`torch.LongTensor` of shape `(batch_size, text_seq_len)`, *optional*):
-            Labels for computing the left-to-right language and multimodal masked modeling loss (next word prediction).
-            Indices should be in `[-100, 0, ..., text_config.vocab_size - 1]` (see `input_ids` docstring). Tokens with
-            indices set to `-100` are ignored (masked), the loss is only computed for the tokens with labels in `[0,
-            ..., text_config.vocab_size - 1]`.
-
-        mim_labels (`torch.LongTensor` of shape `(batch_size, image_num_patches)`, *optional*):
-            Labels for computing the image and multimodal masked modeling loss. Indices should be in `[-100, 0, ...,
-            image_config.vocab_size - 1]`. Tokens with indices set to `-100` are ignored (masked), the loss is only
-            computed for the tokens with labels in `[0, ..., image_config.vocab_size - 1]`. If not passed, they are
-            generated automatically using the image codebook assigned to the model. By default, it uses
-            [`FlavaImageCodebook`]. See [`FlavaImageCodebook`] to understand how to generate mim_labels.
-
-        itm_labels (`torch.LongTensor` of shape `(batch_size, 1)`, *optional*):
-            Labels for computing the image-text matching loss. 0 means the pairs don't match and 1 means they match.
-            The pairs with 0 will be skipped for calculation of MMM and global contrastive losses as well.
-
-        return_loss (`bool`, *optional*, default to None):
-            Whether to return calculated loss or not.
-"""
-    + FLAVA_INPUTS_DOCSTRING_COMMON
-)
-
-FLAVA_PRETRAINING_START_DOCSTRING_EXTRA = r"""
-    Parameters:
-        image_codebook ([`nn.Module`]): If passed, the image codebook will be set to this. Otherwise. it will
-            be initialized using the image_codebook_config defined in the config first as the first parameter.
-"""
-
-
+@auto_docstring
 class FlavaPreTrainedModel(PreTrainedModel):
-    """
-    An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
-    models.
-    """
-
     config_class = FlavaConfig
     base_model_prefix = "flava"
     supports_gradient_checkpointing = True
@@ -872,17 +710,21 @@ class FlavaPreTrainedModel(PreTrainedModel):
         elif isinstance(module, nn.LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
+        elif isinstance(module, FlavaMaskedPredictionHead):
+            module.bias.data.zero_()
+        elif isinstance(module, FlavaImageEmbeddings):
+            module.cls_token.data.zero_()
+            module.position_embeddings.data.zero_()
+            if module.mask_token is not None:
+                module.mask_token.data.zero_()
+        elif isinstance(module, FlavaMultimodalModel):
+            if module.use_cls_token:
+                module.cls_token.data.zero_()
+        elif isinstance(module, FlavaModel):
+            module.logit_scale.data.fill_(self.config.logit_scale_init_value)
 
-    def _set_gradient_checkpointing(self, module: FlavaEncoder, gradient_checkpointing_func=None) -> None:
-        if isinstance(module, FlavaEncoder):
-            module.gradient_checkpointing_func = gradient_checkpointing_func
-            module.gradient_checkpointing = gradient_checkpointing_func is not None
 
-
-@add_start_docstrings(
-    "The bare FLAVA Image Model transformer outputting raw hidden-states without any specific head on top.",
-    FLAVA_START_DOCSTRING.format(config="FlavaImageConfig"),
-)
+@auto_docstring
 class FlavaImageModel(FlavaPreTrainedModel):
     config_class = FlavaImageConfig
     # This override allows us to load FlavaImageModel from FlavaModel/FlavaForPreTraining checkpoints.
@@ -890,6 +732,10 @@ class FlavaImageModel(FlavaPreTrainedModel):
     main_input_name = "pixel_values"
 
     def __init__(self, config: FlavaImageConfig, add_pooling_layer: bool = True):
+        r"""
+        add_pooling_layer (bool, *optional*, defaults to `True`):
+            Whether to add a pooling layer
+        """
         super().__init__(config)
 
         self.config = config
@@ -916,14 +762,7 @@ class FlavaImageModel(FlavaPreTrainedModel):
         for layer, heads in heads_to_prune.items():
             self.encoder.layer[layer].attention.prune_heads(heads)
 
-    @add_start_docstrings_to_model_forward(FLAVA_IMAGE_INPUTS_DOCSTRING.format("batch_size, image_num_patches"))
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPooling,
-        config_class=_CONFIG_CLASS_FOR_IMAGE_MODEL_DOC,
-        modality="vision",
-        expected_output=_EXPECTED_IMAGE_OUTPUT_SHAPE,
-    )
+    @auto_docstring
     def forward(
         self,
         pixel_values: Optional[torch.Tensor] = None,
@@ -935,6 +774,10 @@ class FlavaImageModel(FlavaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[tuple, BaseModelOutputWithPooling]:
+        r"""
+        bool_masked_pos (`torch.BoolTensor` of shape `(batch_size, image_num_patches)`):
+            Boolean masked positions. Indicates which patches are masked (1) and which aren't (0).
+        """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -978,16 +821,17 @@ class FlavaImageModel(FlavaPreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    "The bare FLAVA Text Model transformer outputting raw hidden-states without any specific head on top.",
-    FLAVA_START_DOCSTRING.format(config="FlavaTextConfig"),
-)
+@auto_docstring
 class FlavaTextModel(FlavaPreTrainedModel):
     config_class = FlavaTextConfig
     # This override allows us to load FlavaTextModel from FlavaModel/FlavaForPreTraining checkpoints.
     base_model_prefix = "flava.text_model"
 
     def __init__(self, config: FlavaTextConfig, add_pooling_layer: bool = True):
+        r"""
+        add_pooling_layer (bool, *optional*, defaults to `True`):
+            Whether to add a pooling layer
+        """
         super().__init__(config)
         self.config = config
 
@@ -1013,12 +857,7 @@ class FlavaTextModel(FlavaPreTrainedModel):
         for layer, heads in heads_to_prune.items():
             self.encoder.layer[layer].attention.prune_heads(heads)
 
-    @add_start_docstrings_to_model_forward(FLAVA_TEXT_INPUTS_DOCSTRING.format("batch_size, text_seq_length"))
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPooling,
-        config_class=_CONFIG_CLASS_FOR_TEXT_MODEL_DOC,
-    )
+    @auto_docstring
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
@@ -1030,6 +869,18 @@ class FlavaTextModel(FlavaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[tuple, BaseModelOutputWithPooling]:
+        r"""
+        input_ids (`torch.LongTensor` of shape `(batch_size, text_seq_length)`):
+            Indices of input sequence tokens in the vocabulary. Indices can be obtained using [`AutoTokenizer`]. See
+            [`PreTrainedTokenizer.encode`] and [`PreTrainedTokenizer.__call__`] for details. [What are input
+            IDs?](../glossary#input-ids)
+        token_type_ids (`torch.LongTensor` of shape `(batch_size, text_seq_length)`, *optional*):
+            Segment token indices to indicate first and second portions of the inputs. Indices are selected in `[0,
+            1]`:
+            - 0 corresponds to a *sentence A* token,
+            - 1 corresponds to a *sentence B* token.
+            [What are token type IDs?](../glossary#token-type-ids)
+        """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -1083,10 +934,7 @@ class FlavaTextModel(FlavaPreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    "The bare FLAVA Multimodal Model transformer outputting raw hidden-states without any specific head on top.",
-    FLAVA_START_DOCSTRING.format(config="FlavaMultimodalConfig"),
-)
+@auto_docstring
 class FlavaMultimodalModel(FlavaPreTrainedModel):
     config_class = FlavaMultimodalConfig
     # This override allows us to load FlavaMultimodalModel from FlavaModel/FlavaForPreTraining checkpoints.
@@ -1094,6 +942,10 @@ class FlavaMultimodalModel(FlavaPreTrainedModel):
     main_input_name = "hidden_states"
 
     def __init__(self, config: FlavaMultimodalConfig, add_pooling_layer=True):
+        r"""
+        add_pooling_layer (bool, *optional*, defaults to `True`):
+            Whether to add a pooling layer
+        """
         super().__init__(config)
         self.config = config
         self.use_cls_token = self.config.use_cls_token
@@ -1115,14 +967,7 @@ class FlavaMultimodalModel(FlavaPreTrainedModel):
         for layer, heads in heads_to_prune.items():
             self.encoder.layer[layer].attention.prune_heads(heads)
 
-    @add_start_docstrings_to_model_forward(
-        FLAVA_MULTIMODAL_INPUTS_DOCSTRING.format("batch_size, image_num_patches + text_seq_len")
-    )
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPooling,
-        config_class=_CONFIG_CLASS_FOR_MULTIMODAL_MODEL_DOC,
-    )
+    @auto_docstring
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -1132,6 +977,10 @@ class FlavaMultimodalModel(FlavaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[tuple, BaseModelOutputWithPooling]:
+        r"""
+        hidden_states (`torch.FloatTensor` of shape `(batch_size, image_num_patches + text_seq_len, hidden_size)`):
+            The concatenated hidden states of unimodal encoders.
+        """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -1181,10 +1030,7 @@ class FlavaMultimodalModel(FlavaPreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    "The bare FLAVA Model transformer outputting raw hidden-states without any specific head on top.",
-    FLAVA_START_DOCSTRING.format(config="FlavaConfig"),
-)
+@auto_docstring
 class FlavaModel(FlavaPreTrainedModel):
     config_class = FlavaConfig
 
@@ -1192,19 +1038,19 @@ class FlavaModel(FlavaPreTrainedModel):
         super().__init__(config)
 
         if not isinstance(config.text_config, FlavaTextConfig):
-            raise ValueError(
+            raise TypeError(
                 "config.text_config is expected to be of type FlavaTextConfig but is of type"
                 f" {type(config.text_config)}."
             )
 
         if not isinstance(config.image_config, FlavaImageConfig):
-            raise ValueError(
+            raise TypeError(
                 "config.image_config is expected to be of type FlavaImageConfig but is of type"
                 f" {type(config.image_config)}."
             )
 
         if not isinstance(config.multimodal_config, FlavaMultimodalConfig):
-            raise ValueError(
+            raise TypeError(
                 "config.multimodal_config is expected to be of type FlavaMultimodalConfig but "
                 + f"is of type {type(config.multimodal_config)}."
             )
@@ -1231,7 +1077,7 @@ class FlavaModel(FlavaPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @add_start_docstrings_to_model_forward(FLAVA_TEXT_INPUTS_DOCSTRING.format("batch_size, text_seq_length"))
+    @auto_docstring
     def get_text_features(
         self,
         input_ids: Optional[torch.Tensor] = None,
@@ -1243,6 +1089,17 @@ class FlavaModel(FlavaPreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> torch.FloatTensor:
         r"""
+        input_ids (`torch.LongTensor` of shape `(batch_size, text_seq_length)`):
+            Indices of input sequence tokens in the vocabulary. Indices can be obtained using [`AutoTokenizer`]. See
+            [`PreTrainedTokenizer.encode`] and [`PreTrainedTokenizer.__call__`] for details. [What are input
+            IDs?](../glossary#input-ids)
+        token_type_ids (`torch.LongTensor` of shape `(batch_size, text_seq_length)`, *optional*):
+            Segment token indices to indicate first and second portions of the inputs. Indices are selected in `[0,
+            1]`:
+            - 0 corresponds to a *sentence A* token,
+            - 1 corresponds to a *sentence B* token.
+            [What are token type IDs?](../glossary#token-type-ids)
+
         Returns:
             text_features (`torch.FloatTensor` of shape `(batch_size, output_dim`): The text embeddings obtained by
             applying the projection layer to the pooled output of [`FlavaTextModel`].
@@ -1259,9 +1116,8 @@ class FlavaModel(FlavaPreTrainedModel):
         ...     text=["a photo of a cat", "a photo of a dog"], max_length=77, padding="max_length", return_tensors="pt"
         ... )
         >>> text_features = model.get_text_features(**inputs)
-        ```""".format(
-            _CHECKPOINT_FOR_DOC
-        )
+        ```
+        """
         text_outputs = self.text_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -1277,7 +1133,7 @@ class FlavaModel(FlavaPreTrainedModel):
 
         return text_features
 
-    @add_start_docstrings_to_model_forward(FLAVA_IMAGE_INPUTS_DOCSTRING.format("batch_size, image_num_patches"))
+    @auto_docstring
     def get_image_features(
         self,
         pixel_values: Optional[torch.Tensor] = None,
@@ -1290,6 +1146,9 @@ class FlavaModel(FlavaPreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> torch.FloatTensor:
         r"""
+        bool_masked_pos (`torch.BoolTensor` of shape `(batch_size, image_num_patches)`):
+            Boolean masked positions. Indicates which patches are masked (1) and which aren't (0).
+
         Returns:
             image_features (`torch.FloatTensor` of shape `(batch_size, output_dim`): The image embeddings obtained by
             applying the projection layer to the pooled output of [`FlavaImageModel`].
@@ -1310,9 +1169,8 @@ class FlavaModel(FlavaPreTrainedModel):
         >>> inputs = processor(images=image, return_tensors="pt")
 
         >>> image_features = model.get_image_features(**inputs)
-        ```""".format(
-            _CHECKPOINT_FOR_DOC
-        )
+        ```
+        """
         image_outputs = self.image_model(
             pixel_values=pixel_values,
             bool_masked_pos=bool_masked_pos,
@@ -1329,10 +1187,7 @@ class FlavaModel(FlavaPreTrainedModel):
 
         return image_features
 
-    @add_start_docstrings_to_model_forward(
-        FLAVA_MODEL_INPUTS_DOCSTRING.format("batch_size, image_num_patches + text_seq_len")
-    )
-    @replace_return_docstrings(output_type=FlavaModelOutput, config_class=FlavaConfig)
+    @auto_docstring
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -1348,7 +1203,24 @@ class FlavaModel(FlavaPreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, FlavaOutput]:
         r"""
-        Returns:
+        input_ids (`torch.LongTensor` of shape `(batch_size, image_num_patches + text_seq_len)`):
+            Indices of input sequence tokens in the vocabulary. Indices can be obtained using [`AutoTokenizer`]. See
+            [`PreTrainedTokenizer.encode`] and [`PreTrainedTokenizer.__call__`] for details. [What are input
+            IDs?](../glossary#input-ids)
+        token_type_ids (`torch.LongTensor` of shape `(batch_size, image_num_patches + text_seq_len)`, *optional*):
+            Segment token indices to indicate first and second portions of the inputs. Indices are selected in `[0,
+            1]`:
+            - 0 corresponds to a *sentence A* token,
+            - 1 corresponds to a *sentence B* token.
+            [What are token type IDs?](../glossary#token-type-ids)
+        bool_masked_pos (`torch.BoolTensor` of shape `(batch_size, image_num_patches)`):
+            Boolean masked positions. Indicates which patches are masked (1) and which aren't (0).
+        skip_multimodal_encoder (*bool*, *optional*):
+            Skip any calculations for multimodal encoder. Useful if multimodal encoding is not going to be used.
+        image_attention_mask (`torch.Tensor` of shape `(batch_size, image_num_patches)`, *optional*):
+            Mask to avoid performing attention on padding pixel values for image inputs. Mask values selected in `[0, 1]`:
+            - 1 for pixel values that are real (i.e., **not masked**),
+            - 0 for pixel values that are padding (i.e., **masked**).
 
         Examples:
 
@@ -1424,8 +1296,18 @@ class FlavaModel(FlavaPreTrainedModel):
         multimodal_embeddings = None
         multimodal_output = None
         if image_mm_projection is not None and text_mm_projection is not None and not skip_multimodal_encoder:
+            if attention_mask is not None:
+                batch_size, seq_len, _ = image_mm_projection.shape
+                if self.multimodal_model.use_cls_token:
+                    seq_len += 1
+                attention_mask_image = torch.ones(batch_size, seq_len, device=image_mm_projection.device)
+                attention_multimodal = torch.cat([attention_mask_image, attention_mask], dim=1)
+            else:
+                attention_multimodal = None
             multimodal_input = torch.cat([image_mm_projection, text_mm_projection], dim=1)
-            multimodal_output = self.multimodal_model(multimodal_input, return_dict=return_dict)
+            multimodal_output = self.multimodal_model(
+                multimodal_input, attention_mask=attention_multimodal, return_dict=return_dict
+            )
             multimodal_embeddings = multimodal_output[0]
 
         if not return_dict:
@@ -1492,9 +1374,9 @@ class FlavaImageCodebookLayerGroup(nn.Module):
         blocks = OrderedDict()
         for i in range(num_blocks):
             if i == 0:
-                blocks[f"block_{i+1}"] = FlavaImageCodebookBlock(in_size, out_size, num_layers)
+                blocks[f"block_{i + 1}"] = FlavaImageCodebookBlock(in_size, out_size, num_layers)
             else:
-                blocks[f"block_{i+1}"] = FlavaImageCodebookBlock(out_size, out_size, num_layers)
+                blocks[f"block_{i + 1}"] = FlavaImageCodebookBlock(out_size, out_size, num_layers)
 
         if use_pool:
             blocks["pool"] = nn.MaxPool2d(kernel_size=2)
@@ -1506,13 +1388,12 @@ class FlavaImageCodebookLayerGroup(nn.Module):
 
 
 # Inspired by DALLE Encoder in https://github.com/openai/DALL-E/blob/5be4b236bc3ade6943662354117a0e83752cc322/dall_e/encoder.py#L42
-@add_start_docstrings(
-    """
+@auto_docstring(
+    custom_intro="""
     The FLAVA's image codebook model inspired from DALL-E's original encoder. Outputs raw hidden states and can be used
     to generate image tokens for an image based on DALL-E's vocab. Used to generate labels for MIM. Use
     `get_codebook_indices` to get image tokens for an image.
-    """,
-    FLAVA_START_DOCSTRING.format(config="FlavaImageCodebookConfig"),
+    """
 )
 class FlavaImageCodebook(FlavaPreTrainedModel):
     base_model_prefix = ""
@@ -1588,9 +1469,7 @@ class FlavaImageCodebook(FlavaPreTrainedModel):
 
         >>> outputs = model.get_codebook_indices(**inputs)
         ```
-        """.format(
-            _CHECKPOINT_FOR_CODEBOOK_DOC
-        )
+        """.format(_CHECKPOINT_FOR_CODEBOOK_DOC)
         z_logits = self.blocks(pixel_values)
         return torch.argmax(z_logits, axis=1)
 
@@ -1625,9 +1504,7 @@ class FlavaImageCodebook(FlavaPreTrainedModel):
         >>> print(outputs.shape)
         (1, 196)
         ```
-        """.format(
-            _CHECKPOINT_FOR_CODEBOOK_DOC
-        )
+        """.format(_CHECKPOINT_FOR_CODEBOOK_DOC)
         if len(pixel_values.shape) != 4:
             raise ValueError(f"input shape {pixel_values.shape} is not 4d")
         if pixel_values.shape[1] != self.input_channels:
@@ -1663,6 +1540,9 @@ class FlavaMaskedPredictionHead(nn.Module):
             self.decoder.weight = weight
 
         # Need a link between the two variables so that the bias is correctly resized with `resize_token_embeddings`
+        self.decoder.bias = self.bias
+
+    def _tie_weights(self):
         self.decoder.bias = self.bias
 
     def forward(self, x):
@@ -1724,11 +1604,10 @@ class FlavaGlobalContrastiveHead(nn.Module):
         return logits_per_image, logits_per_text, labels
 
 
-@add_start_docstrings(
-    """
+@auto_docstring(
+    custom_intro="""
     The FLAVA model for pretraining which outputs losses, embeddings, logits and transformer outputs.
-    """,
-    FLAVA_START_DOCSTRING.format(config="FlavaConfig") + FLAVA_PRETRAINING_START_DOCSTRING_EXTRA,
+    """
 )
 class FlavaForPreTraining(FlavaPreTrainedModel):
     # Those are linked to xxx.bias
@@ -1740,6 +1619,11 @@ class FlavaForPreTraining(FlavaPreTrainedModel):
     ]
 
     def __init__(self, config: FlavaConfig, image_codebook: Optional[nn.Module] = None):
+        r"""
+        image_codebook ([`nn.Module`]):
+            If passed, the image codebook will be set to this. Otherwise, it will be initialized using the
+            image_codebook_config defined in the config first as the first parameter.
+        """
         super().__init__(config)
         self.flava = FlavaModel(config)
 
@@ -1774,10 +1658,7 @@ class FlavaForPreTraining(FlavaPreTrainedModel):
             x = x.view(x.size(0), -1)
         return x
 
-    @add_start_docstrings_to_model_forward(
-        FLAVA_PRETRAINING_INPUTS_DOCSTRING.format("batch_size, text_seq_len", "batch_size, image_num_patches")
-    )
-    @replace_return_docstrings(output_type=FlavaForPreTrainingOutput, config_class=FlavaConfig)
+    @auto_docstring
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -1789,7 +1670,7 @@ class FlavaForPreTraining(FlavaPreTrainedModel):
         bool_masked_pos: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         image_attention_mask: Optional[torch.Tensor] = None,
-        skip_unmasked_multimodal_encoder: bool = None,
+        skip_unmasked_multimodal_encoder: Optional[bool] = None,
         mlm_labels: Optional[torch.Tensor] = None,
         mim_labels: Optional[torch.Tensor] = None,
         itm_labels: Optional[torch.Tensor] = None,
@@ -1798,7 +1679,52 @@ class FlavaForPreTraining(FlavaPreTrainedModel):
         return_dict: Optional[bool] = None,
         return_loss: Optional[bool] = None,
     ) -> Union[Tuple[torch.Tensor], FlavaForPreTrainingOutput]:
-        """
+        r"""
+        input_ids (`torch.LongTensor` of shape `(batch_size, text_seq_len)`):
+            Indices of input sequence tokens in the vocabulary. Indices can be obtained using [`AutoTokenizer`]. See
+            [`PreTrainedTokenizer.encode`] and [`PreTrainedTokenizer.__call__`] for details. [What are input
+            IDs?](../glossary#input-ids)
+        input_ids_masked (`torch.LongTensor` of shape `(batch_size, text_seq_len)`):
+            Indices of input sequence tokens in the vocabulary. These ones are the masked version of the original task
+            to be used with MLM. Indices can be obtained using [`AutoTokenizer`] along with
+            [`DataCollatorForMaskedLanguageModeling`]. See [`PreTrainedTokenizer.encode`] and
+            [`PreTrainedTokenizer.__call__`] for details. [What are input IDs?](../glossary#input-ids)
+        token_type_ids (`torch.LongTensor` of shape `(batch_size, text_seq_len)`, *optional*):
+            Segment token indices to indicate first and second portions of the inputs. Indices are selected in `[0,
+            1]`:
+            - 0 corresponds to a *sentence A* token,
+            - 1 corresponds to a *sentence B* token.
+            [What are token type IDs?](../glossary#token-type-ids)
+        bool_masked_pos (`torch.BoolTensor` of shape `(batch_size, image_num_patches)`):
+            Boolean masked positions. Indicates which patches are masked (1) and which aren't (0).
+        image_attention_mask (`torch.FloatTensor` of shape `(batch_size, image_num_patches)`, *optional*):
+            Mask to avoid performing attention on padding token indices specifically for images. Mask values selected
+            in `[0, 1]`:
+            - 1 for tokens that are **not masked**,
+            - 0 for tokens that are **masked**.
+            [What are attention masks?](../glossary#attention-mask)
+        skip_unmasked_multimodal_encoder (*bool*, *optional*):
+            Skip any calculations for multimodal encoder for unmasked inputs. FLAVA pretraining doesn't need unmasked
+            multimodal embeddings or outputs as of now.
+        mlm_labels (`torch.LongTensor` of shape `(batch_size, text_seq_len)`, *optional*):
+            Labels for computing the left-to-right language and multimodal masked modeling loss (next word prediction).
+            Indices should be in `[-100, 0, ..., text_config.vocab_size - 1]` (see `input_ids` docstring). Tokens with
+            indices set to `-100` are ignored (masked), the loss is only computed for the tokens with labels in `[0,
+            ..., text_config.vocab_size - 1]`.
+        mim_labels (`torch.LongTensor` of shape `(batch_size, image_num_patches)`, *optional*):
+            Labels for computing the image and multimodal masked modeling loss. Indices should be in `[-100, 0, ...,
+            image_config.vocab_size - 1]`. Tokens with indices set to `-100` are ignored (masked), the loss is only
+            computed for the tokens with labels in `[0, ..., image_config.vocab_size - 1]`. If not passed, they are
+            generated automatically using the image codebook assigned to the model. By default, it uses
+            [`FlavaImageCodebook`]. See [`FlavaImageCodebook`] to understand how to generate mim_labels.
+        itm_labels (`torch.LongTensor` of shape `(batch_size, 1)`, *optional*):
+            Labels for computing the image-text matching loss. 0 means the pairs don't match and 1 means they match.
+            The pairs with 0 will be skipped for calculation of MMM and global contrastive losses as well.
+        return_loss (`bool`, *optional*, default to None):
+            Whether to return calculated loss or not.
+        codebook_pixel_values (`torch.FloatTensor` of shape `(batch_size, num_image_patches, patch_size, patch_size, 3)`, *optional*):
+            Pixel values for image patches that are used to compute the image codebook labels for masked image modeling.
+
         Examples:
         ```python
         >>> from PIL import Image
@@ -1826,9 +1752,6 @@ class FlavaForPreTraining(FlavaPreTrainedModel):
 
         >>> output = model(**inputs)
         ```
-
-        Return:
-
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         return_loss = return_loss if return_loss is not None else self.config.return_loss
@@ -1962,6 +1885,7 @@ class FlavaForPreTraining(FlavaPreTrainedModel):
 
                 if mim_labels is not None:
                     mim_labels = mim_labels[pos_mask]
+                    bool_masked_pos = bool_masked_pos[pos_mask]
 
         # MMM Image Loss
         if multimodal_masked_embeddings is not None and self.mmm_image_weight > 0:
@@ -1969,8 +1893,6 @@ class FlavaForPreTraining(FlavaPreTrainedModel):
             end_index = image_masked_embeddings.size(1) - 1
             sequence_for_image = sequence_for_image[:, 2 : 2 + end_index, :]
 
-            if pos_mask is not None:
-                sequence_for_image = sequence_for_image[pos_mask]
             if mim_labels is not None:
                 mim_labels = self._resize_to_2d(mim_labels)
                 bool_masked_pos = self._resize_to_2d(bool_masked_pos)
@@ -1992,8 +1914,6 @@ class FlavaForPreTraining(FlavaPreTrainedModel):
         if multimodal_masked_embeddings is not None and self.mmm_text_weight > 0:
             sequence_for_text = multimodal_masked_embeddings
             sequence_for_text = sequence_for_text[:, -text_masked_embeddings.size(1) :, :]
-            if pos_mask is not None:
-                sequence_for_text = sequence_for_text[pos_mask]
 
             if mlm_labels is not None:
                 mlm_labels = self._resize_to_2d(mlm_labels)
@@ -2103,3 +2023,14 @@ class FlavaForPreTraining(FlavaPreTrainedModel):
             mmm_image_logits=mmm_image_logits,
             mmm_text_logits=mmm_text_logits,
         )
+
+
+__all__ = [
+    "FlavaForPreTraining",
+    "FlavaImageCodebook",
+    "FlavaImageModel",
+    "FlavaModel",
+    "FlavaMultimodalModel",
+    "FlavaPreTrainedModel",
+    "FlavaTextModel",
+]

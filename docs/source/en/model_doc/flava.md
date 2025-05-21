@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # FLAVA
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The FLAVA model was proposed in [FLAVA: A Foundational Language And Vision Alignment Model](https://arxiv.org/abs/2112.04482) by Amanpreet Singh, Ronghang Hu, Vedanuj Goswami, Guillaume Couairon, Wojciech Galuba, Marcus Rohrbach, and Douwe Kiela and is accepted at CVPR 2022.
@@ -33,9 +37,7 @@ at once -- a true vision and language foundation model should be good at vision 
 cross- and multi-modal vision and language tasks. We introduce FLAVA as such a model and demonstrate
 impressive performance on a wide range of 35 tasks spanning these target modalities.*
 
-
 This model was contributed by [aps](https://huggingface.co/aps). The original code can be found [here](https://github.com/facebookresearch/multimodal/tree/main/examples/flava).
-
 
 ## FlavaConfig
 
@@ -68,6 +70,11 @@ This model was contributed by [aps](https://huggingface.co/aps). The original co
 ## FlavaImageProcessor
 
 [[autodoc]] FlavaImageProcessor
+    - preprocess
+
+## FlavaImageProcessorFast
+
+[[autodoc]] FlavaImageProcessorFast
     - preprocess
 
 ## FlavaForPreTraining

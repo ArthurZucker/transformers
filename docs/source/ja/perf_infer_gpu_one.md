@@ -44,7 +44,7 @@ Flash Attention 2は、モデルのdtypeが`fp16`または`bf16`の場合にの�
 
 ### Quick usage
 
-モデルでFlash Attention 2を有効にするには、`from_pretrained`の引数に`use_flash_attention_2`を追加します。
+モデルでFlash Attention 2を有効にするには、`from_pretrained`の引数に`attn_implementation="flash_attention_2"`を追加します。
 
 
 ```python
@@ -55,9 +55,9 @@ model_id = "tiiuae/falcon-7b"
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 model = AutoModelForCausalLM.from_pretrained(
-    model_id, 
-    torch_dtype=torch.bfloat16, 
-    use_flash_attention_2=True,
+    model_id,
+    torch_dtype=torch.bfloat16,
+    attn_implementation="flash_attention_2",
 )
 ```
 
@@ -112,9 +112,9 @@ model_id = "tiiuae/falcon-7b"
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 model = AutoModelForCausalLM.from_pretrained(
-    model_id, 
+    model_id,
     load_in_8bit=True,
-    use_flash_attention_2=True,
+    attn_implementation="flash_attention_2",
 )
 ```
 
@@ -130,9 +130,9 @@ model_id = "tiiuae/falcon-7b"
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 model = AutoModelForCausalLM.from_pretrained(
-    model_id, 
+    model_id,
     load_in_4bit=True,
-    use_flash_attention_2=True,
+    attn_implementation="flash_attention_2",
 )
 ```
 
@@ -149,9 +149,9 @@ model_id = "tiiuae/falcon-7b"
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 model = AutoModelForCausalLM.from_pretrained(
-    model_id, 
+    model_id,
     load_in_4bit=True,
-    use_flash_attention_2=True,
+    attn_implementation="flash_attention_2",
 )
 
 lora_config = LoraConfig(
@@ -173,7 +173,7 @@ BetterTransformerは、テキスト、画像、およびオーディオモデル
 <Tip>
 
 Flash Attentionは、fp16またはbf16のdtypeを使用するモデルにのみ使用できます。BetterTransformerを使用する前に、モデルを適切なdtypeにキャストしてください。
-  
+
 </Tip>
 
 ### Encoder models
@@ -214,11 +214,12 @@ model.to_bettertransformer()
 # Use it for training or inference
 ```
 
-SDPAは、ハードウェアや問題のサイズに応じて[Flash Attention](https://arxiv.org/abs/2205.14135)カーネルを使用することもできます。Flash Attentionを有効にするか、特定の設定（ハードウェア、問題サイズ）で使用可能かどうかを確認するには、[`torch.backends.cuda.sdp_kernel`](https://pytorch.org/docs/master/backends.html#torch.backends.cuda.sdp_kernel)をコンテキストマネージャとして使用します。
+SDPAは、ハードウェアや問題のサイズに応じて[Flash Attention](https://arxiv.org/abs/2205.14135)カーネルを使用することもできます。Flash Attentionを有効にするか、特定の設定（ハードウェア、問題サイズ）で使用可能かどうかを確認するには、[`torch.nn.attention.sdpa_kernel`](https://pytorch.org/docs/stable/generated/torch.nn.attention.sdpa_kernel.html)をコンテキストマネージャとして使用します。
 
 
 ```diff
 import torch
++ from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 tokenizer = AutoTokenizer.from_pretrained("facebook/opt-350m")
@@ -229,7 +230,7 @@ model.to_bettertransformer()
 input_text = "Hello my dog is cute and"
 inputs = tokenizer(input_text, return_tensors="pt").to("cuda")
 
-+ with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
++ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
     outputs = model.generate(**inputs)
 
 print(tokenizer.decode(outputs[0], skip_special_tokens=True))
@@ -357,10 +358,10 @@ Int8混合精度行列分解は、行列乗算を2つのストリームに分割
 必要なライブラリをインストールした後、ミックス 8 ビットモデルを読み込む方法は次の通りです：
 
 ```py
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 
 model_name = "bigscience/bloom-2b5"
-model_8bit = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", load_in_8bit=True)
+model_8bit = AutoModelForCausalLM.from_pretrained(model_name, quantization_config=BitsAndBytesConfig(load_in_8bit=True))
 ```
 
 以下はシンプルな例です：
@@ -370,11 +371,11 @@ model_8bit = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto",
 
 
 ```py
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 model_name = "bigscience/bloom-2b5"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
-model_8bit = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", load_in_8bit=True)
+model_8bit = AutoModelForCausalLM.from_pretrained(model_name, quantization_config=BitsAndBytesConfig(load_in_8bit=True))
 
 prompt = "Hello, my llama is cute"
 inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
@@ -388,7 +389,7 @@ outputs = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
 ```py
 model_name = "bigscience/bloom-2b5"
-model_8bit = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", load_in_8bit=True)
+model_8bit = AutoModelForCausalLM.from_pretrained(model_name, quantization_config=BitsAndBytesConfig(load_in_8bit=True))
 ```
 
 `accelerate`を使用して各GPUに割り当てるGPU RAMを制御する際には、以下のように`max_memory`引数を使用します：
@@ -421,6 +422,7 @@ In this example, the first GPU will use 1GB of memory and the second 2GB.
 
 ```py
 import torch
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 quantization_config = BitsAndBytesConfig(
@@ -434,7 +436,7 @@ model = AutoModelForCausalLM.from_pretrained("facebook/opt-350m", quantization_c
 input_text = "Hello my dog is cute and"
 inputs = tokenizer(input_text, return_tensors="pt").to("cuda")
 
-with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
+with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
     outputs = model.generate(**inputs)
 
 print(tokenizer.decode(outputs[0], skip_special_tokens=True))

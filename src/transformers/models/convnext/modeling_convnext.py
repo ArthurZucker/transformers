@@ -12,8 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch ConvNext model."""
-
+"""PyTorch ConvNext model."""
 
 from typing import Optional, Tuple, Union
 
@@ -30,34 +29,12 @@ from ...modeling_outputs import (
     ImageClassifierOutputWithNoAttention,
 )
 from ...modeling_utils import PreTrainedModel
-from ...utils import (
-    add_code_sample_docstrings,
-    add_start_docstrings,
-    add_start_docstrings_to_model_forward,
-    logging,
-    replace_return_docstrings,
-)
+from ...utils import auto_docstring, logging
 from ...utils.backbone_utils import BackboneMixin
 from .configuration_convnext import ConvNextConfig
 
 
 logger = logging.get_logger(__name__)
-
-# General docstring
-_CONFIG_FOR_DOC = "ConvNextConfig"
-
-# Base docstring
-_CHECKPOINT_FOR_DOC = "facebook/convnext-tiny-224"
-_EXPECTED_OUTPUT_SHAPE = [1, 768, 7, 7]
-
-# Image classification docstring
-_IMAGE_CLASS_CHECKPOINT = "facebook/convnext-tiny-224"
-_IMAGE_CLASS_EXPECTED_OUTPUT = "tabby, tabby cat"
-
-CONVNEXT_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "facebook/convnext-tiny-224",
-    # See all ConvNext models at https://huggingface.co/models?filter=convnext
-]
 
 
 # Copied from transformers.models.beit.modeling_beit.drop_path
@@ -231,7 +208,8 @@ class ConvNextEncoder(nn.Module):
         super().__init__()
         self.stages = nn.ModuleList()
         drop_path_rates = [
-            x.tolist() for x in torch.linspace(0, config.drop_path_rate, sum(config.depths)).split(config.depths)
+            x.tolist()
+            for x in torch.linspace(0, config.drop_path_rate, sum(config.depths), device="cpu").split(config.depths)
         ]
         prev_chs = config.hidden_sizes[0]
         for i in range(config.num_stages):
@@ -273,16 +251,12 @@ class ConvNextEncoder(nn.Module):
         )
 
 
+@auto_docstring
 class ConvNextPreTrainedModel(PreTrainedModel):
-    """
-    An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
-    models.
-    """
-
     config_class = ConvNextConfig
     base_model_prefix = "convnext"
     main_input_name = "pixel_values"
-    supports_gradient_checkpointing = True
+    _no_split_modules = ["ConvNextLayer"]
 
     def _init_weights(self, module):
         """Initialize the weights"""
@@ -292,45 +266,15 @@ class ConvNextPreTrainedModel(PreTrainedModel):
             module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
             if module.bias is not None:
                 module.bias.data.zero_()
-        elif isinstance(module, nn.LayerNorm):
+        elif isinstance(module, (nn.LayerNorm, ConvNextLayerNorm)):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
-
-    def _set_gradient_checkpointing(self, module, gradient_checkpointing_func=None):
-        if isinstance(module, ConvNextEncoder):
-            module.gradient_checkpointing_func = gradient_checkpointing_func
-            module.gradient_checkpointing = gradient_checkpointing_func is not None
+        elif isinstance(module, ConvNextLayer):
+            if module.layer_scale_parameter is not None:
+                module.layer_scale_parameter.data.fill_(self.config.layer_scale_init_value)
 
 
-CONVNEXT_START_DOCSTRING = r"""
-    This model is a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass. Use it
-    as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage and
-    behavior.
-
-    Parameters:
-        config ([`ConvNextConfig`]): Model configuration class with all the parameters of the model.
-            Initializing with a config file does not load the weights associated with the model, only the
-            configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
-"""
-
-CONVNEXT_INPUTS_DOCSTRING = r"""
-    Args:
-        pixel_values (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)`):
-            Pixel values. Pixel values can be obtained using [`AutoImageProcessor`]. See
-            [`ConvNextImageProcessor.__call__`] for details.
-
-        output_hidden_states (`bool`, *optional*):
-            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
-            more detail.
-        return_dict (`bool`, *optional*):
-            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-"""
-
-
-@add_start_docstrings(
-    "The bare ConvNext model outputting raw features without any specific head on top.",
-    CONVNEXT_START_DOCSTRING,
-)
+@auto_docstring
 class ConvNextModel(ConvNextPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -345,17 +289,10 @@ class ConvNextModel(ConvNextPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @add_start_docstrings_to_model_forward(CONVNEXT_INPUTS_DOCSTRING)
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPoolingAndNoAttention,
-        config_class=_CONFIG_FOR_DOC,
-        modality="vision",
-        expected_output=_EXPECTED_OUTPUT_SHAPE,
-    )
+    @auto_docstring
     def forward(
         self,
-        pixel_values: torch.FloatTensor = None,
+        pixel_values: Optional[torch.FloatTensor] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPoolingAndNoAttention]:
@@ -390,12 +327,11 @@ class ConvNextModel(ConvNextPreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    """
+@auto_docstring(
+    custom_intro="""
     ConvNext Model with an image classification head on top (a linear layer on top of the pooled features), e.g. for
     ImageNet.
-    """,
-    CONVNEXT_START_DOCSTRING,
+    """
 )
 class ConvNextForImageClassification(ConvNextPreTrainedModel):
     def __init__(self, config):
@@ -412,16 +348,10 @@ class ConvNextForImageClassification(ConvNextPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @add_start_docstrings_to_model_forward(CONVNEXT_INPUTS_DOCSTRING)
-    @add_code_sample_docstrings(
-        checkpoint=_IMAGE_CLASS_CHECKPOINT,
-        output_type=ImageClassifierOutputWithNoAttention,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output=_IMAGE_CLASS_EXPECTED_OUTPUT,
-    )
+    @auto_docstring
     def forward(
         self,
-        pixel_values: torch.FloatTensor = None,
+        pixel_values: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
@@ -473,11 +403,10 @@ class ConvNextForImageClassification(ConvNextPreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    """
+@auto_docstring(
+    custom_intro="""
     ConvNeXt backbone, to be used with frameworks like DETR and MaskFormer.
-    """,
-    CONVNEXT_START_DOCSTRING,
+    """
 )
 class ConvNextBackbone(ConvNextPreTrainedModel, BackboneMixin):
     def __init__(self, config):
@@ -497,17 +426,14 @@ class ConvNextBackbone(ConvNextPreTrainedModel, BackboneMixin):
         # initialize weights and apply final processing
         self.post_init()
 
-    @add_start_docstrings_to_model_forward(CONVNEXT_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=BackboneOutput, config_class=_CONFIG_FOR_DOC)
+    @auto_docstring
     def forward(
         self,
         pixel_values: torch.Tensor,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> BackboneOutput:
-        """
-        Returns:
-
+        r"""
         Examples:
 
         ```python
@@ -535,14 +461,13 @@ class ConvNextBackbone(ConvNextPreTrainedModel, BackboneMixin):
         outputs = self.encoder(
             embedding_output,
             output_hidden_states=True,
-            return_dict=True,
+            return_dict=return_dict,
         )
 
-        hidden_states = outputs.hidden_states
+        hidden_states = outputs.hidden_states if return_dict else outputs[1]
 
         feature_maps = ()
-        # we skip the stem
-        for idx, (stage, hidden_state) in enumerate(zip(self.stage_names[1:], hidden_states[1:])):
+        for stage, hidden_state in zip(self.stage_names, hidden_states):
             if stage in self.out_features:
                 hidden_state = self.hidden_states_norms[stage](hidden_state)
                 feature_maps += (hidden_state,)
@@ -550,11 +475,14 @@ class ConvNextBackbone(ConvNextPreTrainedModel, BackboneMixin):
         if not return_dict:
             output = (feature_maps,)
             if output_hidden_states:
-                output += (outputs.hidden_states,)
+                output += (hidden_states,)
             return output
 
         return BackboneOutput(
             feature_maps=feature_maps,
-            hidden_states=outputs.hidden_states if output_hidden_states else None,
+            hidden_states=hidden_states if output_hidden_states else None,
             attentions=None,
         )
+
+
+__all__ = ["ConvNextForImageClassification", "ConvNextModel", "ConvNextPreTrainedModel", "ConvNextBackbone"]

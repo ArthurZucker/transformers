@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # CodeGen
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The CodeGen model was proposed in [A Conversational Paradigm for Program Synthesis](https://arxiv.org/abs/2203.13474) by Erik Nijkamp, Bo Pang, Hiroaki Hayashi, Lifu Tu, Huan Wang, Yingbo Zhou, Silvio Savarese, and Caiming Xiong.
@@ -40,7 +44,7 @@ The original code can be found [here](https://github.com/salesforce/codegen).
     * `mono`: Initialized with `multi`, then further pre-trained on Python data
 * For example, `Salesforce/codegen-350M-mono` offers a 350 million-parameter checkpoint pre-trained sequentially on the Pile, multiple programming languages, and Python.
 
-## How to use
+## Usage example
 
 ```python
 >>> from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -60,7 +64,7 @@ def hello_world():
 hello_world()
 ```
 
-## Documentation resources
+## Resources
 
 - [Causal language modeling task guide](../tasks/language_modeling)
 
@@ -72,6 +76,7 @@ hello_world()
 ## CodeGenTokenizer
 
 [[autodoc]] CodeGenTokenizer
+    - create_token_type_ids_from_sequences
     - save_vocabulary
 
 ## CodeGenTokenizerFast

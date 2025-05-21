@@ -16,6 +16,11 @@ rendered properly in your Markdown viewer.
 
 # LXMERT
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
+</div>
+
 ## Overview
 
 The LXMERT model was proposed in [LXMERT: Learning Cross-Modality Encoder Representations from Transformers](https://arxiv.org/abs/1908.07490) by Hao Tan & Mohit Bansal. It is a series of bidirectional transformer encoders
@@ -41,7 +46,9 @@ best result by 22% absolute (54% to 76%). Lastly, we demonstrate detailed ablati
 model components and pretraining strategies significantly contribute to our strong results; and also present several
 attention visualizations for the different encoders*
 
-Tips:
+This model was contributed by [eltoto1219](https://huggingface.co/eltoto1219). The original code can be found [here](https://github.com/airsplay/lxmert).
+
+## Usage tips
 
 - Bounding boxes are not necessary to be used in the visual feature embeddings, any kind of visual-spacial features
   will work.
@@ -53,9 +60,7 @@ Tips:
   contains self-attention for each respective modality and cross-attention, only the cross attention is returned and
   both self attention outputs are disregarded.
 
-This model was contributed by [eltoto1219](https://huggingface.co/eltoto1219). The original code can be found [here](https://github.com/airsplay/lxmert).
-
-## Documentation resources
+## Resources
 
 - [Question answering task guide](../tasks/question_answering)
 
@@ -83,6 +88,9 @@ This model was contributed by [eltoto1219](https://huggingface.co/eltoto1219). T
 
 [[autodoc]] models.lxmert.modeling_tf_lxmert.TFLxmertForPreTrainingOutput
 
+<frameworkcontent>
+<pt>
+
 ## LxmertModel
 
 [[autodoc]] LxmertModel
@@ -98,6 +106,9 @@ This model was contributed by [eltoto1219](https://huggingface.co/eltoto1219). T
 [[autodoc]] LxmertForQuestionAnswering
     - forward
 
+</pt>
+<tf>
+
 ## TFLxmertModel
 
 [[autodoc]] TFLxmertModel
@@ -107,3 +118,6 @@ This model was contributed by [eltoto1219](https://huggingface.co/eltoto1219). T
 
 [[autodoc]] TFLxmertForPreTraining
     - call
+
+</tf>
+</frameworkcontent>

@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Fuyu model configuration"""
+"""Fuyu model configuration"""
 
 from ...configuration_utils import PretrainedConfig
 from ...utils import logging
@@ -21,17 +21,13 @@ from ..auto import CONFIG_MAPPING
 
 logger = logging.get_logger(__name__)
 
-FUYU_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "adept/fuyu-8b-base": "https://huggingface.co/adept/fuyu-8b-base/resolve/main/config.json",
-}
-
 
 class FuyuConfig(PretrainedConfig):
     r"""
     This is the configuration class to store the configuration of a [`FuyuForCausalLM`]. It is used to instantiate an
     Fuyu model according to the specified arguments, defining the model architecture. Instantiating a configuration
     with the defaults will yield a similar configuration to that of the
-    [adept/fuyu-8b-base](https://huggingface.co/adept/fuyu-8b-base).
+    [adept/fuyu-8b](https://huggingface.co/adept/fuyu-8b).
 
     Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
     documentation from [`PretrainedConfig`] for more information.
@@ -102,6 +98,7 @@ class FuyuConfig(PretrainedConfig):
     >>> # Initializing a Fuyu fuyu-7b style configuration
     >>> configuration = FuyuConfig()
     ```"""
+
     model_type = "fuyu"
     keys_to_ignore_at_inference = ["past_key_values"]
 
@@ -160,7 +157,7 @@ class FuyuConfig(PretrainedConfig):
         text_model_type = text_config["model_type"] if "model_type" in text_config else "persimmon"
         self.text_config = CONFIG_MAPPING[text_model_type](**text_config)
 
-        self.vocab_size = vocab_size
+        self._vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
         self.image_size = image_size
         self.patch_size = patch_size
@@ -189,7 +186,6 @@ class FuyuConfig(PretrainedConfig):
             **kwargs,
         )
 
-    # Copied from transformers.models.llama.configuration_llama.LlamaConfig._rope_scaling_validation
     def _rope_scaling_validation(self):
         """
         Validate the `rope_scaling` configuration.
@@ -199,8 +195,7 @@ class FuyuConfig(PretrainedConfig):
 
         if not isinstance(self.rope_scaling, dict) or len(self.rope_scaling) != 2:
             raise ValueError(
-                "`rope_scaling` must be a dictionary with with two fields, `type` and `factor`, "
-                f"got {self.rope_scaling}"
+                f"`rope_scaling` must be a dictionary with two fields, `type` and `factor`, got {self.rope_scaling}"
             )
         rope_scaling_type = self.rope_scaling.get("type", None)
         rope_scaling_factor = self.rope_scaling.get("factor", None)
@@ -210,3 +205,6 @@ class FuyuConfig(PretrainedConfig):
             )
         if rope_scaling_factor is None or not isinstance(rope_scaling_factor, float) or rope_scaling_factor <= 1.0:
             raise ValueError(f"`rope_scaling`'s factor field must be a float > 1, got {rope_scaling_factor}")
+
+
+__all__ = ["FuyuConfig"]

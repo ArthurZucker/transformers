@@ -16,6 +16,11 @@ rendered properly in your Markdown viewer.
 
 # ConvNeXT
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
+</div>
+
 ## Overview
 
 The ConvNeXT model was proposed in [A ConvNet for the 2020s](https://arxiv.org/abs/2201.03545) by Zhuang Liu, Hanzi Mao, Chao-Yuan Wu, Christoph Feichtenhofer, Trevor Darrell, Saining Xie.
@@ -31,10 +36,6 @@ biases of convolutions. In this work, we reexamine the design spaces and test th
 of a vision Transformer, and discover several key components that contribute to the performance difference along the way. The outcome of this exploration is a family of pure ConvNet models
 dubbed ConvNeXt. Constructed entirely from standard ConvNet modules, ConvNeXts compete favorably with Transformers in terms of accuracy and scalability, achieving 87.8% ImageNet top-1 accuracy
 and outperforming Swin Transformers on COCO detection and ADE20K segmentation, while maintaining the simplicity and efficiency of standard ConvNets.*
-
-Tips:
-
-- See the code examples below each model regarding usage.
 
 <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/convnext_architecture.jpg"
 alt="drawing" width="600"/>
@@ -68,6 +69,14 @@ If you're interested in submitting a resource to be included here, please feel f
 [[autodoc]] ConvNextImageProcessor
     - preprocess
 
+## ConvNextImageProcessorFast
+
+[[autodoc]] ConvNextImageProcessorFast
+    - preprocess
+
+<frameworkcontent>
+<pt>
+
 ## ConvNextModel
 
 [[autodoc]] ConvNextModel
@@ -78,14 +87,18 @@ If you're interested in submitting a resource to be included here, please feel f
 [[autodoc]] ConvNextForImageClassification
     - forward
 
+</pt>
+<tf>
 
 ## TFConvNextModel
 
 [[autodoc]] TFConvNextModel
     - call
 
-
 ## TFConvNextForImageClassification
 
 [[autodoc]] TFConvNextForImageClassification
     - call
+
+</tf>
+</frameworkcontent>

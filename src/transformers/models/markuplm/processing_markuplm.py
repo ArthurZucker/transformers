@@ -15,6 +15,7 @@
 """
 Processor class for MarkupLM.
 """
+
 from typing import Optional, Union
 
 from ...file_utils import TensorType
@@ -41,6 +42,7 @@ class MarkupLMProcessor(ProcessorMixin):
         parse_html (`bool`, *optional*, defaults to `True`):
             Whether or not to use `MarkupLMFeatureExtractor` to parse HTML strings into nodes and corresponding xpaths.
     """
+
     feature_extractor_class = "MarkupLMFeatureExtractor"
     tokenizer_class = ("MarkupLMTokenizer", "MarkupLMTokenizerFast")
     parse_html = True
@@ -143,3 +145,6 @@ class MarkupLMProcessor(ProcessorMixin):
     def model_input_names(self):
         tokenizer_input_names = self.tokenizer.model_input_names
         return tokenizer_input_names
+
+
+__all__ = ["MarkupLMProcessor"]

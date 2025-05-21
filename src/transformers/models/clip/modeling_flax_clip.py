@@ -43,9 +43,10 @@ CLIP_START_DOCSTRING = r"""
     This model inherits from [`FlaxPreTrainedModel`]. Check the superclass documentation for the generic methods the
     library implements for all its model (such as downloading, saving and converting weights from PyTorch models)
 
-    This model is also a Flax Linen [flax.linen.Module](https://flax.readthedocs.io/en/latest/flax.linen.html#module)
-    subclass. Use it as a regular Flax linen Module and refer to the Flax documentation for all matter related to
-    general usage and behavior.
+    This model is also a
+    [flax.linen.Module](https://flax.readthedocs.io/en/latest/api_reference/flax.linen/module.html) subclass. Use it as
+    a regular Flax linen Module and refer to the Flax documentation for all matter related to general usage and
+    behavior.
 
     Finally, this model supports inherent JAX features such as:
 
@@ -181,8 +182,8 @@ class FlaxCLIPTextModelOutput(ModelOutput):
 
     text_embeds: jnp.ndarray = None
     last_hidden_state: jnp.ndarray = None
-    hidden_states: Optional[Tuple[jnp.ndarray]] = None
-    attentions: Optional[Tuple[jnp.ndarray]] = None
+    hidden_states: Optional[Tuple[jnp.ndarray, ...]] = None
+    attentions: Optional[Tuple[jnp.ndarray, ...]] = None
 
 
 @flax.struct.dataclass
@@ -666,7 +667,7 @@ class FlaxCLIPTextPreTrainedModel(FlaxPreTrainedModel):
         input_ids,
         attention_mask=None,
         position_ids=None,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: jax.random.PRNGKey = None,
         train: bool = False,
         output_attentions: Optional[bool] = None,
@@ -744,7 +745,7 @@ class FlaxCLIPVisionPreTrainedModel(FlaxPreTrainedModel):
     def __call__(
         self,
         pixel_values,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: jax.random.PRNGKey = None,
         train: bool = False,
         output_attentions: Optional[bool] = None,
@@ -822,7 +823,7 @@ class FlaxCLIPPreTrainedModel(FlaxPreTrainedModel):
         pixel_values,
         attention_mask=None,
         position_ids=None,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: jax.random.PRNGKey = None,
         train: bool = False,
         output_attentions: Optional[bool] = None,
@@ -866,7 +867,7 @@ class FlaxCLIPPreTrainedModel(FlaxPreTrainedModel):
         input_ids,
         attention_mask=None,
         position_ids=None,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: jax.random.PRNGKey = None,
         train=False,
     ):
@@ -929,7 +930,7 @@ class FlaxCLIPPreTrainedModel(FlaxPreTrainedModel):
         )
 
     def get_image_features(
-        self, pixel_values, params: dict = None, dropout_rng: jax.random.PRNGKey = None, train=False
+        self, pixel_values, params: Optional[dict] = None, dropout_rng: jax.random.PRNGKey = None, train=False
     ):
         r"""
         Args:
@@ -1292,3 +1293,14 @@ FLAX_CLIP_MODEL_DOCSTRING = """
 
 overwrite_call_docstring(FlaxCLIPModel, CLIP_INPUTS_DOCSTRING + FLAX_CLIP_MODEL_DOCSTRING)
 append_replace_return_docstrings(FlaxCLIPModel, output_type=FlaxCLIPOutput, config_class=CLIPConfig)
+
+
+__all__ = [
+    "FlaxCLIPModel",
+    "FlaxCLIPPreTrainedModel",
+    "FlaxCLIPTextModel",
+    "FlaxCLIPTextPreTrainedModel",
+    "FlaxCLIPTextModelWithProjection",
+    "FlaxCLIPVisionModel",
+    "FlaxCLIPVisionPreTrainedModel",
+]

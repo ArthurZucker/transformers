@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # M-CTC-T
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 <Tip warning={true}>
 
 This model is in maintenance mode only, so we won't accept any new PRs changing its code.
@@ -40,17 +44,15 @@ pseudo-labels for all languages, either from scratch or by fine-tuning. Experime
 Common Voice and unlabeled VoxPopuli datasets show that our recipe can yield a model with better
 performance for many languages that also transfers well to LibriSpeech.*
 
-
-
 This model was contributed by [cwkeam](https://huggingface.co/cwkeam). The original code can be found [here](https://github.com/flashlight/wav2letter/tree/main/recipes/mling_pl).
 
-## Documentation resources
+## Usage tips
+
+The PyTorch version of this model is only available in torch 1.9 and higher.
+
+## Resources
 
 - [Automatic speech recognition task guide](../tasks/asr)
-
-Tips:
-
-- The PyTorch version of this model is only available in torch 1.9 and higher.
 
 ## MCTCTConfig
 
@@ -69,7 +71,6 @@ Tips:
     - save_pretrained
     - batch_decode
     - decode
-
 
 ## MCTCTModel
 

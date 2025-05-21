@@ -12,6 +12,10 @@ specific language governing permissions and limitations under the License.
 
 # BROS
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The BROS model was proposed in [BROS: A Pre-trained Language Model Focusing on Text and Layout for Better Key Information Extraction from Documents](https://arxiv.org/abs/2108.04539) by Teakgyu Hong, Donghyun Kim, Mingi Ji, Wonseok Hwang, Daehyun Nam, Sungrae Park.
@@ -31,12 +35,13 @@ AMLM is a 2D version of TMLM. It randomly masks text tokens and predicts with th
 
 BROS achieves comparable or better result on Key Information Extraction (KIE) benchmarks such as FUNSD, SROIE, CORD and SciTSR, without relying on explicit visual features.
 
-
 The abstract from the paper is the following:
 
 *Key information extraction (KIE) from document images requires understanding the contextual and spatial semantics of texts in two-dimensional (2D) space. Many recent studies try to solve the task by developing pre-trained language models focusing on combining visual features from document images with texts and their layout. On the other hand, this paper tackles the problem by going back to the basic: effective combination of text and layout. Specifically, we propose a pre-trained language model, named BROS (BERT Relying On Spatiality), that encodes relative positions of texts in 2D space and learns from unlabeled documents with area-masking strategy. With this optimized training scheme for understanding texts in 2D space, BROS shows comparable or better performance compared to previous methods on four KIE benchmarks (FUNSD, SROIE*, CORD, and SciTSR) without relying on visual features. This paper also reveals two real-world challenges in KIE tasks-(1) minimizing the error from incorrect text ordering and (2) efficient learning from fewer downstream examples-and demonstrates the superiority of BROS over previous methods.*
 
-Tips:
+This model was contributed by [jinho8345](https://huggingface.co/jinho8345). The original code can be found [here](https://github.com/clovaai/bros).
+
+## Usage tips and examples
 
 - [`~transformers.BrosModel.forward`] requires `input_ids` and `bbox` (bounding box). Each bounding box should be in (x0, y0, x1, y1) format (top-left corner, bottom-right corner). Obtaining of Bounding boxes depends on external OCR system. The `x` coordinate should be normalized by document image width, and the `y` coordinate should be normalized by document image height.
 
@@ -78,9 +83,9 @@ def make_box_first_token_mask(bboxes, words, tokenizer, max_seq_length=512):
 
 ```
 
-- Demo scripts can be found [here](https://github.com/clovaai/bros).
+## Resources
 
-This model was contributed by [jinho8345](https://huggingface.co/jinho8345). The original code can be found [here](https://github.com/clovaai/bros).
+- Demo scripts can be found [here](https://github.com/clovaai/bros).
 
 ## BrosConfig
 
@@ -102,12 +107,10 @@ This model was contributed by [jinho8345](https://huggingface.co/jinho8345). The
 [[autodoc]] BrosForTokenClassification
     - forward
 
-
 ## BrosSpadeEEForTokenClassification
 
 [[autodoc]] BrosSpadeEEForTokenClassification
     - forward
-
 
 ## BrosSpadeELForTokenClassification
 

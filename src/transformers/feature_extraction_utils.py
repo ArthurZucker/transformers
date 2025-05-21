@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2021 The HuggingFace Inc. team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
- Feature extraction saving/loading class for common feature extractors.
+Feature extraction saving/loading class for common feature extractors.
 """
 
 import copy
@@ -21,7 +20,7 @@ import json
 import os
 import warnings
 from collections import UserDict
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
 
@@ -31,6 +30,7 @@ from .utils import (
     PushToHubMixin,
     TensorType,
     add_model_info_to_auto_map,
+    add_model_info_to_custom_pipelines,
     cached_file,
     copy_func,
     download_url,
@@ -73,7 +73,7 @@ class BatchFeature(UserDict):
             initialization.
     """
 
-    def __init__(self, data: Optional[Dict[str, Any]] = None, tensor_type: Union[None, str, TensorType] = None):
+    def __init__(self, data: Optional[dict[str, Any]] = None, tensor_type: Union[None, str, TensorType] = None):
         super().__init__(data)
         self.convert_to_tensors(tensor_type=tensor_type)
 
@@ -112,17 +112,9 @@ class BatchFeature(UserDict):
     def items(self):
         return self.data.items()
 
-    def convert_to_tensors(self, tensor_type: Optional[Union[str, TensorType]] = None):
-        """
-        Convert the inner content to tensors.
-
-        Args:
-            tensor_type (`str` or [`~utils.TensorType`], *optional*):
-                The type of tensors to use. If `str`, should be one of the values of the enum [`~utils.TensorType`]. If
-                `None`, no modification is done.
-        """
+    def _get_is_as_tensor_fns(self, tensor_type: Optional[Union[str, TensorType]] = None):
         if tensor_type is None:
-            return self
+            return None, None
 
         # Convert to TensorType
         if not isinstance(tensor_type, TensorType):
@@ -144,9 +136,19 @@ class BatchFeature(UserDict):
             import torch  # noqa
 
             def as_tensor(value):
-                if isinstance(value, (list, tuple)) and len(value) > 0 and isinstance(value[0], np.ndarray):
-                    value = np.array(value)
-                return torch.tensor(value)
+                if isinstance(value, (list, tuple)) and len(value) > 0:
+                    if isinstance(value[0], np.ndarray):
+                        value = np.array(value)
+                    elif (
+                        isinstance(value[0], (list, tuple))
+                        and len(value[0]) > 0
+                        and isinstance(value[0][0], np.ndarray)
+                    ):
+                        value = np.array(value)
+                if isinstance(value, np.ndarray):
+                    return torch.from_numpy(value)
+                else:
+                    return torch.tensor(value)
 
             is_tensor = torch.is_tensor
         elif tensor_type == TensorType.JAX:
@@ -167,6 +169,21 @@ class BatchFeature(UserDict):
                 return np.asarray(value, dtype=dtype)
 
             is_tensor = is_numpy_array
+        return is_tensor, as_tensor
+
+    def convert_to_tensors(self, tensor_type: Optional[Union[str, TensorType]] = None):
+        """
+        Convert the inner content to tensors.
+
+        Args:
+            tensor_type (`str` or [`~utils.TensorType`], *optional*):
+                The type of tensors to use. If `str`, should be one of the values of the enum [`~utils.TensorType`]. If
+                `None`, no modification is done.
+        """
+        if tensor_type is None:
+            return self
+
+        is_tensor, as_tensor = self._get_is_as_tensor_fns(tensor_type)
 
         # Do the tensor conversion in batch
         for key, value in self.items():
@@ -195,6 +212,7 @@ class BatchFeature(UserDict):
                 Will be passed to the `to(...)` function of the tensors.
             kwargs (`Dict`, *optional*):
                 Will be passed to the `to(...)` function of the tensors.
+                To enable asynchronous data transfer, set the `non_blocking` flag in `kwargs` (defaults to `False`).
 
         Returns:
             [`BatchFeature`]: The same instance after modification.
@@ -204,6 +222,7 @@ class BatchFeature(UserDict):
 
         new_data = {}
         device = kwargs.get("device")
+        non_blocking = kwargs.get("non_blocking", False)
         # Check if the args are a device or a dtype
         if device is None and len(args) > 0:
             # device should be always the first argument
@@ -219,11 +238,11 @@ class BatchFeature(UserDict):
         # We cast only floating point tensors to avoid issues with tokenizers casting `LongTensor` to `FloatTensor`
         for k, v in self.items():
             # check if v is a floating point
-            if torch.is_floating_point(v):
+            if isinstance(v, torch.Tensor) and torch.is_floating_point(v):
                 # cast and send to device
                 new_data[k] = v.to(*args, **kwargs)
-            elif device is not None:
-                new_data[k] = v.to(device=device)
+            elif isinstance(v, torch.Tensor) and device is not None:
+                new_data[k] = v.to(device=device, non_blocking=non_blocking)
             else:
                 new_data[k] = v
         self.data = new_data
@@ -274,8 +293,7 @@ class FeatureExtractionMixin(PushToHubMixin):
                 This can be either:
 
                 - a string, the *model id* of a pretrained feature_extractor hosted inside a model repo on
-                  huggingface.co. Valid model ids can be located at the root-level, like `bert-base-uncased`, or
-                  namespaced under a user or organization name, like `dbmdz/bert-base-german-cased`.
+                  huggingface.co.
                 - a path to a *directory* containing a feature extractor file saved using the
                   [`~feature_extraction_utils.FeatureExtractionMixin.save_pretrained`] method, e.g.,
                   `./my_model_directory/`.
@@ -287,9 +305,9 @@ class FeatureExtractionMixin(PushToHubMixin):
             force_download (`bool`, *optional*, defaults to `False`):
                 Whether or not to force to (re-)download the feature extractor files and override the cached versions
                 if they exist.
-            resume_download (`bool`, *optional*, defaults to `False`):
-                Whether or not to delete incompletely received file. Attempts to resume the download if such a file
-                exists.
+            resume_download:
+                Deprecated and ignored. All downloads are now resumed by default when possible.
+                Will be removed in v5 of Transformers.
             proxies (`Dict[str, str]`, *optional*):
                 A dictionary of proxy servers to use by protocol or endpoint, e.g., `{'http': 'foo.bar:3128',
                 'http://hostname': 'foo.bar:4012'}.` The proxies are used on each request.
@@ -304,7 +322,7 @@ class FeatureExtractionMixin(PushToHubMixin):
 
                 <Tip>
 
-                To test a pull request you made on the Hub, you can pass `revision="refs/pr/<pr_number>".
+                To test a pull request you made on the Hub, you can pass `revision="refs/pr/<pr_number>"`.
 
                 </Tip>
 
@@ -351,7 +369,8 @@ class FeatureExtractionMixin(PushToHubMixin):
         use_auth_token = kwargs.pop("use_auth_token", None)
         if use_auth_token is not None:
             warnings.warn(
-                "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers.", FutureWarning
+                "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers. Please use `token` instead.",
+                FutureWarning,
             )
             if token is not None:
                 raise ValueError(
@@ -385,7 +404,8 @@ class FeatureExtractionMixin(PushToHubMixin):
 
         if use_auth_token is not None:
             warnings.warn(
-                "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers.", FutureWarning
+                "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers. Please use `token` instead.",
+                FutureWarning,
             )
             if kwargs.get("token", None) is not None:
                 raise ValueError(
@@ -429,7 +449,7 @@ class FeatureExtractionMixin(PushToHubMixin):
     @classmethod
     def get_feature_extractor_dict(
         cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """
         From a `pretrained_model_name_or_path`, resolve to a dictionary of parameters, to be used for instantiating a
         feature extractor of type [`~feature_extraction_utils.FeatureExtractionMixin`] using `from_dict`.
@@ -443,8 +463,9 @@ class FeatureExtractionMixin(PushToHubMixin):
         """
         cache_dir = kwargs.pop("cache_dir", None)
         force_download = kwargs.pop("force_download", False)
-        resume_download = kwargs.pop("resume_download", False)
+        resume_download = kwargs.pop("resume_download", None)
         proxies = kwargs.pop("proxies", None)
+        subfolder = kwargs.pop("subfolder", None)
         token = kwargs.pop("token", None)
         use_auth_token = kwargs.pop("use_auth_token", None)
         local_files_only = kwargs.pop("local_files_only", False)
@@ -452,7 +473,8 @@ class FeatureExtractionMixin(PushToHubMixin):
 
         if use_auth_token is not None:
             warnings.warn(
-                "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers.", FutureWarning
+                "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers. Please use `token` instead.",
+                FutureWarning,
             )
             if token is not None:
                 raise ValueError(
@@ -493,17 +515,18 @@ class FeatureExtractionMixin(PushToHubMixin):
                     proxies=proxies,
                     resume_download=resume_download,
                     local_files_only=local_files_only,
+                    subfolder=subfolder,
                     token=token,
                     user_agent=user_agent,
                     revision=revision,
                 )
-            except EnvironmentError:
+            except OSError:
                 # Raise any environment error raise by `cached_file`. It will have a helpful error message adapted to
                 # the original exception.
                 raise
             except Exception:
                 # For any other exception, we throw a generic error.
-                raise EnvironmentError(
+                raise OSError(
                     f"Can't load feature extractor for '{pretrained_model_name_or_path}'. If you were trying to load"
                     " it from 'https://huggingface.co/models', make sure you don't have a local directory with the"
                     f" same name. Otherwise, make sure '{pretrained_model_name_or_path}' is the correct path to a"
@@ -512,12 +535,12 @@ class FeatureExtractionMixin(PushToHubMixin):
 
         try:
             # Load feature_extractor dict
-            with open(resolved_feature_extractor_file, "r", encoding="utf-8") as reader:
+            with open(resolved_feature_extractor_file, encoding="utf-8") as reader:
                 text = reader.read()
             feature_extractor_dict = json.loads(text)
 
         except json.JSONDecodeError:
-            raise EnvironmentError(
+            raise OSError(
                 f"It looks like the config file at '{resolved_feature_extractor_file}' is not a valid JSON file."
             )
 
@@ -528,15 +551,20 @@ class FeatureExtractionMixin(PushToHubMixin):
                 f"loading configuration file {feature_extractor_file} from cache at {resolved_feature_extractor_file}"
             )
 
-        if "auto_map" in feature_extractor_dict and not is_local:
-            feature_extractor_dict["auto_map"] = add_model_info_to_auto_map(
-                feature_extractor_dict["auto_map"], pretrained_model_name_or_path
-            )
+        if not is_local:
+            if "auto_map" in feature_extractor_dict:
+                feature_extractor_dict["auto_map"] = add_model_info_to_auto_map(
+                    feature_extractor_dict["auto_map"], pretrained_model_name_or_path
+                )
+            if "custom_pipelines" in feature_extractor_dict:
+                feature_extractor_dict["custom_pipelines"] = add_model_info_to_custom_pipelines(
+                    feature_extractor_dict["custom_pipelines"], pretrained_model_name_or_path
+                )
 
         return feature_extractor_dict, kwargs
 
     @classmethod
-    def from_dict(cls, feature_extractor_dict: Dict[str, Any], **kwargs) -> PreTrainedFeatureExtractor:
+    def from_dict(cls, feature_extractor_dict: dict[str, Any], **kwargs) -> PreTrainedFeatureExtractor:
         """
         Instantiates a type of [`~feature_extraction_utils.FeatureExtractionMixin`] from a Python dictionary of
         parameters.
@@ -555,16 +583,16 @@ class FeatureExtractionMixin(PushToHubMixin):
         """
         return_unused_kwargs = kwargs.pop("return_unused_kwargs", False)
 
-        feature_extractor = cls(**feature_extractor_dict)
-
         # Update feature_extractor with kwargs if needed
         to_remove = []
         for key, value in kwargs.items():
-            if hasattr(feature_extractor, key):
-                setattr(feature_extractor, key, value)
+            if key in feature_extractor_dict:
+                feature_extractor_dict[key] = value
                 to_remove.append(key)
         for key in to_remove:
             kwargs.pop(key, None)
+
+        feature_extractor = cls(**feature_extractor_dict)
 
         logger.info(f"Feature extractor {feature_extractor}")
         if return_unused_kwargs:
@@ -572,16 +600,17 @@ class FeatureExtractionMixin(PushToHubMixin):
         else:
             return feature_extractor
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
-        Serializes this instance to a Python dictionary.
-
-        Returns:
-            `Dict[str, Any]`: Dictionary of all the attributes that make up this feature extractor instance.
+        Serializes this instance to a Python dictionary. Returns:
+            `Dict[str, Any]`: Dictionary of all the attributes that make up this configuration instance.
         """
         output = copy.deepcopy(self.__dict__)
         output["feature_extractor_type"] = self.__class__.__name__
-
+        if "mel_filters" in output:
+            del output["mel_filters"]
+        if "window" in output:
+            del output["window"]
         return output
 
     @classmethod
@@ -598,7 +627,7 @@ class FeatureExtractionMixin(PushToHubMixin):
             A feature extractor of type [`~feature_extraction_utils.FeatureExtractionMixin`]: The feature_extractor
             object instantiated from that JSON file.
         """
-        with open(json_file, "r", encoding="utf-8") as reader:
+        with open(json_file, encoding="utf-8") as reader:
             text = reader.read()
         feature_extractor_dict = json.loads(text)
         return cls(**feature_extractor_dict)

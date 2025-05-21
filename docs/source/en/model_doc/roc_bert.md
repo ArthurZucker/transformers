@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # RoCBert
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The RoCBert model was proposed in [RoCBert: Robust Chinese Bert with Multimodal Contrastive Pretraining](https://aclanthology.org/2022.acl-long.65.pdf)  by HuiSu, WeiweiShi, XiaoyuShen, XiaoZhou, TuoJi, JiaruiFang, JieZhou.
@@ -35,7 +39,7 @@ in the toxic content detection task under human-made attacks.*
 
 This model was contributed by [weiweishi](https://huggingface.co/weiweishi).
 
-## Documentation resources
+## Resources
 
 - [Text classification task guide](../tasks/sequence_classification)
 - [Token classification task guide](../tasks/token_classification)
@@ -49,7 +53,6 @@ This model was contributed by [weiweishi](https://huggingface.co/weiweishi).
 [[autodoc]] RoCBertConfig
     - all
 
-
 ## RoCBertTokenizer
 
 [[autodoc]] RoCBertTokenizer
@@ -58,30 +61,25 @@ This model was contributed by [weiweishi](https://huggingface.co/weiweishi).
     - create_token_type_ids_from_sequences
     - save_vocabulary
 
-
 ## RoCBertModel
 
 [[autodoc]] RoCBertModel
     - forward
-
 
 ## RoCBertForPreTraining
 
 [[autodoc]] RoCBertForPreTraining
     - forward
 
-
 ## RoCBertForCausalLM
 
 [[autodoc]] RoCBertForCausalLM
     - forward
 
-
 ## RoCBertForMaskedLM
 
 [[autodoc]] RoCBertForMaskedLM
     - forward
-
 
 ## RoCBertForSequenceClassification
 
@@ -93,12 +91,10 @@ This model was contributed by [weiweishi](https://huggingface.co/weiweishi).
 [[autodoc]] transformers.RoCBertForMultipleChoice
     - forward
 
-
 ## RoCBertForTokenClassification
 
 [[autodoc]] transformers.RoCBertForTokenClassification
     - forward
-
 
 ## RoCBertForQuestionAnswering
 

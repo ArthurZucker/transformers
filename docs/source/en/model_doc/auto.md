@@ -25,7 +25,7 @@ Instantiating one of [`AutoConfig`], [`AutoModel`], and
 
 
 ```python
-model = AutoModel.from_pretrained("bert-base-cased")
+model = AutoModel.from_pretrained("google-bert/bert-base-cased")
 ```
 
 will create a model that is an instance of [`BertModel`].
@@ -49,7 +49,7 @@ You will then be able to use the auto classes like you would usually do!
 
 <Tip warning={true}>
 
-If your `NewModelConfig` is a subclass of [`~transformer.PretrainedConfig`], make sure its
+If your `NewModelConfig` is a subclass of [`~transformers.PretrainedConfig`], make sure its
 `model_type` attribute is set to the same key you use when registering the config (here `"new-model"`).
 
 Likewise, if your `NewModel` is a subclass of [`PreTrainedModel`], make sure its
@@ -73,6 +73,10 @@ Likewise, if your `NewModel` is a subclass of [`PreTrainedModel`], make sure its
 ## AutoImageProcessor
 
 [[autodoc]] AutoImageProcessor
+
+## AutoVideoProcessor
+
+[[autodoc]] AutoVideoProcessor
 
 ## AutoProcessor
 
@@ -250,6 +254,10 @@ The following auto classes are available for the following computer vision tasks
 
 [[autodoc]] AutoModelForVideoClassification
 
+### AutoModelForKeypointDetection
+
+[[autodoc]] AutoModelForKeypointDetection
+
 ### AutoModelForMaskedImageModeling
 
 [[autodoc]] AutoModelForMaskedImageModeling
@@ -377,3 +385,7 @@ The following auto classes are available for the following multimodal tasks.
 ### FlaxAutoModelForVision2Seq
 
 [[autodoc]] FlaxAutoModelForVision2Seq
+
+### AutoModelForImageTextToText
+
+[[autodoc]] AutoModelForImageTextToText

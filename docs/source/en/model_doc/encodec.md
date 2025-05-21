@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # EnCodec
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The EnCodec neural codec model was proposed in [High Fidelity Neural Audio Compression](https://arxiv.org/abs/2210.13438) by Alexandre Défossez, Jade Copet, Gabriel Synnaeve, Yossi Adi.
@@ -26,6 +30,9 @@ The abstract from the paper is the following:
 
 This model was contributed by [Matthijs](https://huggingface.co/Matthijs), [Patrick Von Platen](https://huggingface.co/patrickvonplaten) and [Arthur Zucker](https://huggingface.co/ArthurZ). 
 The original code can be found [here](https://github.com/facebookresearch/encodec).
+
+## Usage example 
+
 Here is a quick example of how to encode and decode an audio using this model:
 
 ```python 
@@ -44,7 +51,6 @@ Here is a quick example of how to encode and decode an audio using this model:
 >>> # or the equivalent with a forward pass
 >>> audio_values = model(inputs["input_values"], inputs["padding_mask"]).audio_values
 ```
-
 
 ## EncodecConfig
 

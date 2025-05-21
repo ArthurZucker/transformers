@@ -16,6 +16,18 @@ rendered properly in your Markdown viewer.
 
 # DETA
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
+<Tip warning={true}>
+
+This model is in maintenance mode only, we don't accept any new PRs changing its code.
+If you run into any issues running this model, please reinstall the last version that supported this model: v4.40.2.
+You can do so by running the following command: `pip install -U transformers==4.40.2`.
+
+</Tip>
+
 ## Overview
 
 The DETA model was proposed in [NMS Strikes Back](https://arxiv.org/abs/2212.06137) by Jeffrey Ouyang-Zhang, Jang Hyun Cho, Xingyi Zhou, Philipp Krähenbühl.
@@ -25,10 +37,6 @@ with one-to-many label assignments used in traditional detectors with non-maximu
 The abstract from the paper is the following:
 
 *Detection Transformer (DETR) directly transforms queries to unique objects by using one-to-one bipartite matching during training and enables end-to-end object detection. Recently, these models have surpassed traditional detectors on COCO with undeniable elegance. However, they differ from traditional detectors in multiple designs, including model architecture and training schedules, and thus the effectiveness of one-to-one matching is not fully understood. In this work, we conduct a strict comparison between the one-to-one Hungarian matching in DETRs and the one-to-many label assignments in traditional detectors with non-maximum supervision (NMS). Surprisingly, we observe one-to-many assignments with NMS consistently outperform standard one-to-one matching under the same setting, with a significant gain of up to 2.5 mAP. Our detector that trains Deformable-DETR with traditional IoU-based label assignment achieved 50.2 COCO mAP within 12 epochs (1x schedule) with ResNet50 backbone, outperforming all existing traditional or transformer-based detectors in this setting. On multiple datasets, schedules, and architectures, we consistently show bipartite matching is unnecessary for performant detection transformers. Furthermore, we attribute the success of detection transformers to their expressive transformer architecture.*
-
-Tips:
-
-- One can use [`DetaImageProcessor`] to prepare images and optional targets for the model.
 
 <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/model_doc/deta_architecture.jpg"
 alt="drawing" width="600"/>
@@ -43,7 +51,8 @@ The original code can be found [here](https://github.com/jozhang97/DETA).
 A list of official Hugging Face and community (indicated by 🌎) resources to help you get started with DETA.
 
 - Demo notebooks for DETA can be found [here](https://github.com/NielsRogge/Transformers-Tutorials/tree/master/DETA).
-- See also: [Object detection task guide](../tasks/object_detection)
+- Scripts for finetuning [`DetaForObjectDetection`] with [`Trainer`] or [Accelerate](https://huggingface.co/docs/accelerate/index) can be found [here](https://github.com/huggingface/transformers/tree/main/examples/pytorch/object-detection).
+- See also: [Object detection task guide](../tasks/object_detection).
 
 If you're interested in submitting a resource to be included here, please feel free to open a Pull Request and we'll review it! The resource should ideally demonstrate something new instead of duplicating an existing resource.
 
@@ -51,19 +60,16 @@ If you're interested in submitting a resource to be included here, please feel f
 
 [[autodoc]] DetaConfig
 
-
 ## DetaImageProcessor
 
 [[autodoc]] DetaImageProcessor
     - preprocess
     - post_process_object_detection
 
-
 ## DetaModel
 
 [[autodoc]] DetaModel
     - forward
-
 
 ## DetaForObjectDetection
 

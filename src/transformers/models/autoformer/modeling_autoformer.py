@@ -14,7 +14,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch Autoformer model."""
+"""PyTorch Autoformer model."""
 
 import math
 from dataclasses import dataclass
@@ -26,21 +26,15 @@ import torch.utils.checkpoint
 from torch import nn
 
 from ...activations import ACT2FN
-from ...modeling_outputs import (
-    BaseModelOutput,
-    ModelOutput,
-    SampleTSPredictionOutput,
-    Seq2SeqTSPredictionOutput,
-)
+from ...modeling_attn_mask_utils import _prepare_4d_attention_mask
+from ...modeling_outputs import BaseModelOutput, ModelOutput, SampleTSPredictionOutput, Seq2SeqTSPredictionOutput
 from ...modeling_utils import PreTrainedModel
 from ...time_series_utils import NegativeBinomialOutput, NormalOutput, StudentTOutput
-from ...utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging, replace_return_docstrings
+from ...utils import auto_docstring, logging
 from .configuration_autoformer import AutoformerConfig
 
 
 logger = logging.get_logger(__name__)
-
-_CONFIG_FOR_DOC = "AutoformerConfig"
 
 
 @dataclass
@@ -84,8 +78,8 @@ class AutoFormerDecoderOutput(ModelOutput):
             weighted average in the cross-attention heads.
     """
 
-    last_hidden_state: torch.FloatTensor = None
-    trend: torch.FloatTensor = None
+    last_hidden_state: Optional[torch.FloatTensor] = None
+    trend: Optional[torch.FloatTensor] = None
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
@@ -152,8 +146,8 @@ class AutoformerModelOutput(ModelOutput):
             Static features of each time series' in a batch which are copied to the covariates at inference time.
     """
 
-    last_hidden_state: torch.FloatTensor = None
-    trend: torch.FloatTensor = None
+    last_hidden_state: Optional[torch.FloatTensor] = None
+    trend: Optional[torch.FloatTensor] = None
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     decoder_hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     decoder_attentions: Optional[Tuple[torch.FloatTensor]] = None
@@ -164,12 +158,6 @@ class AutoformerModelOutput(ModelOutput):
     loc: Optional[torch.FloatTensor] = None
     scale: Optional[torch.FloatTensor] = None
     static_features: Optional[torch.FloatTensor] = None
-
-
-AUTOFORMER_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "huggingface/autoformer-tourism-monthly",
-    # See all Autoformer models at https://huggingface.co/models?filter=autoformer
-]
 
 
 # Copied from transformers.models.time_series_transformer.modeling_time_series_transformer.TimeSeriesFeatureEmbedder with TimeSeries->Autoformer
@@ -207,71 +195,70 @@ class AutoformerFeatureEmbedder(nn.Module):
         )
 
 
-# Copied from transformers.models.time_series_transformer.modeling_time_series_transformer.TimeSeriesStdScaler with TimeSeries->Autoformer
+# Copied from transformers.models.time_series_transformer.modeling_time_series_transformer.TimeSeriesStdScaler with TimeSeriesTransformer->Autoformer,TimeSeries->Autoformer
 class AutoformerStdScaler(nn.Module):
     """
-    Standardize features by calculating the mean and scaling along some given dimension `dim`, and then normalizes it
-    by subtracting from the mean and dividing by the standard deviation.
-
-    Args:
-        dim (`int`):
-            Dimension along which to calculate the mean and standard deviation.
-        keepdim (`bool`, *optional*, defaults to `False`):
-            Controls whether to retain dimension `dim` (of length 1) in the scale tensor, or suppress it.
-        minimum_scale (`float`, *optional*, defaults to 1e-5):
-            Default scale that is used for elements that are constantly zero along dimension `dim`.
+    Standardize features by calculating the mean and scaling along the first dimension, and then normalizes it by
+    subtracting from the mean and dividing by the standard deviation.
     """
 
-    def __init__(self, dim: int, keepdim: bool = False, minimum_scale: float = 1e-5):
+    def __init__(self, config: AutoformerConfig):
         super().__init__()
-        if not dim > 0:
-            raise ValueError("Cannot compute scale along dim = 0 (batch dimension), please provide dim > 0")
-        self.dim = dim
-        self.keepdim = keepdim
-        self.minimum_scale = minimum_scale
+        self.dim = config.scaling_dim if hasattr(config, "scaling_dim") else 1
+        self.keepdim = config.keepdim if hasattr(config, "keepdim") else True
+        self.minimum_scale = config.minimum_scale if hasattr(config, "minimum_scale") else 1e-5
 
-    @torch.no_grad()
-    def forward(self, data: torch.Tensor, weights: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        denominator = weights.sum(self.dim, keepdim=self.keepdim)
+    def forward(
+        self, data: torch.Tensor, observed_indicator: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Parameters:
+            data (`torch.Tensor` of shape `(batch_size, sequence_length, num_input_channels)`):
+                input for Batch norm calculation
+            observed_indicator (`torch.BoolTensor` of shape `(batch_size, sequence_length, num_input_channels)`):
+                Calculating the scale on the observed indicator.
+        Returns:
+            tuple of `torch.Tensor` of shapes
+                (`(batch_size, sequence_length, num_input_channels)`,`(batch_size, 1, num_input_channels)`,
+                `(batch_size, 1, num_input_channels)`)
+        """
+        denominator = observed_indicator.sum(self.dim, keepdim=self.keepdim)
         denominator = denominator.clamp_min(1.0)
-        loc = (data * weights).sum(self.dim, keepdim=self.keepdim) / denominator
+        loc = (data * observed_indicator).sum(self.dim, keepdim=self.keepdim) / denominator
 
-        variance = (((data - loc) * weights) ** 2).sum(self.dim, keepdim=self.keepdim) / denominator
+        variance = (((data - loc) * observed_indicator) ** 2).sum(self.dim, keepdim=self.keepdim) / denominator
         scale = torch.sqrt(variance + self.minimum_scale)
         return (data - loc) / scale, loc, scale
 
 
-# Copied from transformers.models.time_series_transformer.modeling_time_series_transformer.TimeSeriesMeanScaler with TimeSeries->Autoformer
+# Copied from transformers.models.time_series_transformer.modeling_time_series_transformer.TimeSeriesMeanScaler with TimeSeriesTransformer->Autoformer,TimeSeries->Autoformer
 class AutoformerMeanScaler(nn.Module):
     """
-    Computes a scaling factor as the weighted average absolute value along dimension `dim`, and scales the data
+    Computes a scaling factor as the weighted average absolute value along the first dimension, and scales the data
     accordingly.
-
-    Args:
-        dim (`int`):
-            Dimension along which to compute the scale.
-        keepdim (`bool`, *optional*, defaults to `False`):
-            Controls whether to retain dimension `dim` (of length 1) in the scale tensor, or suppress it.
-        default_scale (`float`, *optional*, defaults to `None`):
-            Default scale that is used for elements that are constantly zero. If `None`, we use the scale of the batch.
-        minimum_scale (`float`, *optional*, defaults to 1e-10):
-            Default minimum possible scale that is used for any item.
     """
 
-    def __init__(
-        self, dim: int = -1, keepdim: bool = True, default_scale: Optional[float] = None, minimum_scale: float = 1e-10
-    ):
+    def __init__(self, config: AutoformerConfig):
         super().__init__()
-        self.dim = dim
-        self.keepdim = keepdim
-        self.minimum_scale = minimum_scale
-        self.default_scale = default_scale
+        self.dim = config.scaling_dim if hasattr(config, "scaling_dim") else 1
+        self.keepdim = config.keepdim if hasattr(config, "keepdim") else True
+        self.minimum_scale = config.minimum_scale if hasattr(config, "minimum_scale") else 1e-10
+        self.default_scale = config.default_scale if hasattr(config, "default_scale") else None
 
-    @torch.no_grad()
     def forward(
         self, data: torch.Tensor, observed_indicator: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # shape: (N, [C], T=1)
+        """
+        Parameters:
+            data (`torch.Tensor` of shape `(batch_size, sequence_length, num_input_channels)`):
+                input for Batch norm calculation
+            observed_indicator (`torch.BoolTensor` of shape `(batch_size, sequence_length, num_input_channels)`):
+                Calculating the scale on the observed indicator.
+        Returns:
+            tuple of `torch.Tensor` of shapes
+                (`(batch_size, sequence_length, num_input_channels)`,`(batch_size, 1, num_input_channels)`,
+                `(batch_size, 1, num_input_channels)`)
+        """
         ts_sum = (data * observed_indicator).abs().sum(self.dim, keepdim=True)
         num_observed = observed_indicator.sum(self.dim, keepdim=True)
 
@@ -299,26 +286,29 @@ class AutoformerMeanScaler(nn.Module):
         return scaled_data, torch.zeros_like(scale), scale
 
 
-# Copied from transformers.models.time_series_transformer.modeling_time_series_transformer.TimeSeriesNOPScaler with TimeSeries->Autoformer
+# Copied from transformers.models.time_series_transformer.modeling_time_series_transformer.TimeSeriesNOPScaler with TimeSeriesTransformer->Autoformer,TimeSeries->Autoformer
 class AutoformerNOPScaler(nn.Module):
     """
-    Assigns a scaling factor equal to 1 along dimension `dim`, and therefore applies no scaling to the input data.
-
-    Args:
-        dim (`int`):
-            Dimension along which to compute the scale.
-        keepdim (`bool`, *optional*, defaults to `False`):
-            Controls whether to retain dimension `dim` (of length 1) in the scale tensor, or suppress it.
+    Assigns a scaling factor equal to 1 along the first dimension, and therefore applies no scaling to the input data.
     """
 
-    def __init__(self, dim: int, keepdim: bool = False):
+    def __init__(self, config: AutoformerConfig):
         super().__init__()
-        self.dim = dim
-        self.keepdim = keepdim
+        self.dim = config.scaling_dim if hasattr(config, "scaling_dim") else 1
+        self.keepdim = config.keepdim if hasattr(config, "keepdim") else True
 
     def forward(
-        self, data: torch.Tensor, observed_indicator: torch.Tensor
+        self, data: torch.Tensor, observed_indicator: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Parameters:
+            data (`torch.Tensor` of shape `(batch_size, sequence_length, num_input_channels)`):
+                input for Batch norm calculation
+        Returns:
+            tuple of `torch.Tensor` of shapes
+                (`(batch_size, sequence_length, num_input_channels)`,`(batch_size, 1, num_input_channels)`,
+                `(batch_size, 1, num_input_channels)`)
+        """
         scale = torch.ones_like(data, requires_grad=False).mean(dim=self.dim, keepdim=self.keepdim)
         loc = torch.zeros_like(data, requires_grad=False).mean(dim=self.dim, keepdim=self.keepdim)
         return data, loc, scale
@@ -357,72 +347,39 @@ def nll(input: torch.distributions.Distribution, target: torch.Tensor) -> torch.
     return -input.log_prob(target)
 
 
-# Copied from transformers.models.bart.modeling_bart._make_causal_mask
-def _make_causal_mask(
-    input_ids_shape: torch.Size, dtype: torch.dtype, device: torch.device, past_key_values_length: int = 0
-):
-    """
-    Make causal mask used for bi-directional self-attention.
-    """
-    bsz, tgt_len = input_ids_shape
-    mask = torch.full((tgt_len, tgt_len), torch.finfo(dtype).min, device=device)
-    mask_cond = torch.arange(mask.size(-1), device=device)
-    mask.masked_fill_(mask_cond < (mask_cond + 1).view(mask.size(-1), 1), 0)
-    mask = mask.to(dtype)
-
-    if past_key_values_length > 0:
-        mask = torch.cat([torch.zeros(tgt_len, past_key_values_length, dtype=dtype, device=device), mask], dim=-1)
-    return mask[None, None, :, :].expand(bsz, 1, tgt_len, tgt_len + past_key_values_length)
-
-
-# Copied from transformers.models.bart.modeling_bart._expand_mask
-def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] = None):
-    """
-    Expands attention_mask from `[bsz, seq_len]` to `[bsz, 1, tgt_seq_len, src_seq_len]`.
-    """
-    bsz, src_len = mask.size()
-    tgt_len = tgt_len if tgt_len is not None else src_len
-
-    expanded_mask = mask[:, None, None, :].expand(bsz, 1, tgt_len, src_len).to(dtype)
-
-    inverted_mask = 1.0 - expanded_mask
-
-    return inverted_mask.masked_fill(inverted_mask.to(torch.bool), torch.finfo(dtype).min)
-
-
 # Copied from transformers.models.marian.modeling_marian.MarianSinusoidalPositionalEmbedding with Marian->Autoformer
 class AutoformerSinusoidalPositionalEmbedding(nn.Embedding):
     """This module produces sinusoidal positional embeddings of any length."""
 
     def __init__(self, num_positions: int, embedding_dim: int, padding_idx: Optional[int] = None) -> None:
         super().__init__(num_positions, embedding_dim)
-        self.weight = self._init_weight(self.weight)
 
-    @staticmethod
-    def _init_weight(out: nn.Parameter) -> nn.Parameter:
+    def _init_weight(self):
         """
         Identical to the XLM create_sinusoidal_embeddings except features are not interleaved. The cos features are in
         the 2nd half of the vector. [dim // 2:]
         """
-        n_pos, dim = out.shape
+        n_pos, dim = self.weight.shape
         position_enc = np.array(
             [[pos / np.power(10000, 2 * (j // 2) / dim) for j in range(dim)] for pos in range(n_pos)]
         )
-        out.requires_grad = False  # set early to avoid an error in pytorch-1.8+
+        out = torch.empty(n_pos, dim, dtype=self.weight.dtype, requires_grad=False)
         sentinel = dim // 2 if dim % 2 == 0 else (dim // 2) + 1
         out[:, 0:sentinel] = torch.FloatTensor(np.sin(position_enc[:, 0::2]))
         out[:, sentinel:] = torch.FloatTensor(np.cos(position_enc[:, 1::2]))
-        out.detach_()
-        return out
+        self.weight = nn.Parameter(out, requires_grad=False)
 
     @torch.no_grad()
-    def forward(self, input_ids_shape: torch.Size, past_key_values_length: int = 0) -> torch.Tensor:
+    def forward(
+        self, input_ids_shape: torch.Size, past_key_values_length: int = 0, position_ids: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         """`input_ids_shape` is expected to be [bsz x seqlen]."""
-        bsz, seq_len = input_ids_shape[:2]
-        positions = torch.arange(
-            past_key_values_length, past_key_values_length + seq_len, dtype=torch.long, device=self.weight.device
-        )
-        return super().forward(positions)
+        if position_ids is None:
+            bsz, seq_len = input_ids_shape[:2]
+            position_ids = torch.arange(
+                past_key_values_length, past_key_values_length + seq_len, dtype=torch.long, device=self.weight.device
+            )
+        return super().forward(position_ids)
 
 
 # Copied from transformers.models.time_series_transformer.modeling_time_series_transformer.TimeSeriesValueEmbedding with TimeSeries->Autoformer
@@ -927,6 +884,7 @@ class AutoformerDecoderLayer(nn.Module):
         return outputs
 
 
+@auto_docstring
 class AutoformerPreTrainedModel(PreTrainedModel):
     config_class = AutoformerConfig
     base_model_prefix = "model"
@@ -940,164 +898,11 @@ class AutoformerPreTrainedModel(PreTrainedModel):
             if module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, AutoformerSinusoidalPositionalEmbedding):
-            pass
+            module._init_weight()
         elif isinstance(module, nn.Embedding):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
-
-    def _set_gradient_checkpointing(self, module, gradient_checkpointing_func=None):
-        if isinstance(module, (AutoformerDecoder, AutoformerEncoder)):
-            module.gradient_checkpointing_func = gradient_checkpointing_func
-            module.gradient_checkpointing = gradient_checkpointing_func is not None
-
-
-AUTOFORMER_START_DOCSTRING = r"""
-    This model inherits from [`PreTrainedModel`]. Check the superclass documentation for the generic methods the
-    library implements for all its model (such as downloading or saving, resizing the input embeddings, pruning heads
-    etc.)
-
-    This model is also a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass.
-    Use it as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage
-    and behavior.
-
-    Parameters:
-        config ([`AutoformerConfig`]):
-            Model configuration class with all the parameters of the model. Initializing with a config file does not
-            load the weights associated with the model, only the configuration. Check out the
-            [`~PreTrainedModel.from_pretrained`] method to load the model weights.
-"""
-
-AUTOFORMER_INPUTS_DOCSTRING = r"""
-    Args:
-        past_values (`torch.FloatTensor` of shape `(batch_size, sequence_length)`):
-            Past values of the time series, that serve as context in order to predict the future. These values may
-            contain lags, i.e. additional values from the past which are added in order to serve as "extra context".
-            The `past_values` is what the Transformer encoder gets as input (with optional additional features, such as
-            `static_categorical_features`, `static_real_features`, `past_time_features`).
-
-            The sequence length here is equal to `context_length` + `max(config.lags_sequence)`.
-
-            Missing values need to be replaced with zeros.
-
-        past_time_features (`torch.FloatTensor` of shape `(batch_size, sequence_length, num_features)`, *optional*):
-            Optional time features, which the model internally will add to `past_values`. These could be things like
-            "month of year", "day of the month", etc. encoded as vectors (for instance as Fourier features). These
-            could also be so-called "age" features, which basically help the model know "at which point in life" a
-            time-series is. Age features have small values for distant past time steps and increase monotonically the
-            more we approach the current time step.
-
-            These features serve as the "positional encodings" of the inputs. So contrary to a model like BERT, where
-            the position encodings are learned from scratch internally as parameters of the model, the Time Series
-            Transformer requires to provide additional time features.
-
-            The Autoformer only learns additional embeddings for `static_categorical_features`.
-
-        past_observed_mask (`torch.BoolTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Boolean mask to indicate which `past_values` were observed and which were missing. Mask values selected in
-            `[0, 1]`:
-
-            - 1 for values that are **observed**,
-            - 0 for values that are **missing** (i.e. NaNs that were replaced by zeros).
-
-        static_categorical_features (`torch.LongTensor` of shape `(batch_size, number of static categorical features)`, *optional*):
-            Optional static categorical features for which the model will learn an embedding, which it will add to the
-            values of the time series.
-
-            Static categorical features are features which have the same value for all time steps (static over time).
-
-            A typical example of a static categorical feature is a time series ID.
-
-        static_real_features (`torch.FloatTensor` of shape `(batch_size, number of static real features)`, *optional*):
-            Optional static real features which the model will add to the values of the time series.
-
-            Static real features are features which have the same value for all time steps (static over time).
-
-            A typical example of a static real feature is promotion information.
-
-        future_values (`torch.FloatTensor` of shape `(batch_size, prediction_length)`):
-            Future values of the time series, that serve as labels for the model. The `future_values` is what the
-            Transformer needs to learn to output, given the `past_values`.
-
-            See the demo notebook and code snippets for details.
-
-            Missing values need to be replaced with zeros.
-
-        future_time_features (`torch.FloatTensor` of shape `(batch_size, prediction_length, num_features)`, *optional*):
-            Optional time features, which the model internally will add to `future_values`. These could be things like
-            "month of year", "day of the month", etc. encoded as vectors (for instance as Fourier features). These
-            could also be so-called "age" features, which basically help the model know "at which point in life" a
-            time-series is. Age features have small values for distant past time steps and increase monotonically the
-            more we approach the current time step.
-
-            These features serve as the "positional encodings" of the inputs. So contrary to a model like BERT, where
-            the position encodings are learned from scratch internally as parameters of the model, the Time Series
-            Transformer requires to provide additional features.
-
-            The Autoformer only learns additional embeddings for `static_categorical_features`.
-
-        attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Mask to avoid performing attention on certain token indices. Mask values selected in `[0, 1]`:
-
-            - 1 for tokens that are **not masked**,
-            - 0 for tokens that are **masked**.
-
-            [What are attention masks?](../glossary#attention-mask)
-
-        decoder_attention_mask (`torch.LongTensor` of shape `(batch_size, target_sequence_length)`, *optional*):
-            Mask to avoid performing attention on certain token indices. By default, a causal mask will be used, to
-            make sure the model can only look at previous inputs in order to predict the future.
-
-        head_mask (`torch.Tensor` of shape `(encoder_layers, encoder_attention_heads)`, *optional*):
-            Mask to nullify selected heads of the attention modules in the encoder. Mask values selected in `[0, 1]`:
-
-            - 1 indicates the head is **not masked**,
-            - 0 indicates the head is **masked**.
-
-        decoder_head_mask (`torch.Tensor` of shape `(decoder_layers, decoder_attention_heads)`, *optional*):
-            Mask to nullify selected heads of the attention modules in the decoder. Mask values selected in `[0, 1]`:
-
-            - 1 indicates the head is **not masked**,
-            - 0 indicates the head is **masked**.
-
-        cross_attn_head_mask (`torch.Tensor` of shape `(decoder_layers, decoder_attention_heads)`, *optional*):
-            Mask to nullify selected heads of the cross-attention modules. Mask values selected in `[0, 1]`:
-
-            - 1 indicates the head is **not masked**,
-            - 0 indicates the head is **masked**.
-
-        encoder_outputs (`tuple(tuple(torch.FloatTensor)`, *optional*):
-            Tuple consists of `last_hidden_state`, `hidden_states` (*optional*) and `attentions` (*optional*)
-            `last_hidden_state` of shape `(batch_size, sequence_length, hidden_size)` (*optional*) is a sequence of
-            hidden-states at the output of the last layer of the encoder. Used in the cross-attention of the decoder.
-        past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
-            Tuple of `tuple(torch.FloatTensor)` of length `config.n_layers`, with each tuple having 2 tensors of shape
-            `(batch_size, num_heads, sequence_length, embed_size_per_head)`) and 2 additional tensors of shape
-            `(batch_size, num_heads, encoder_sequence_length, embed_size_per_head)`.
-
-            Contains pre-computed hidden-states (key and values in the self-attention blocks and in the cross-attention
-            blocks) that can be used (see `past_key_values` input) to speed up sequential decoding.
-
-            If `past_key_values` are used, the user can optionally input only the last `decoder_input_ids` (those that
-            don't have their past key value states given to this model) of shape `(batch_size, 1)` instead of all
-            `decoder_input_ids` of shape `(batch_size, sequence_length)`.
-        inputs_embeds (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
-            Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
-            is useful if you want more control over how to convert `input_ids` indices into associated vectors than the
-            model's internal embedding lookup matrix.
-
-        use_cache (`bool`, *optional*):
-            If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
-            `past_key_values`).
-        output_attentions (`bool`, *optional*):
-            Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
-            tensors for more detail.
-        output_hidden_states (`bool`, *optional*):
-            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
-            more detail.
-        return_dict (`bool`, *optional*):
-            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-"""
 
 
 # Copied from transformers.models.time_series_transformer.modeling_time_series_transformer.TimeSeriesTransformerEncoder with TimeSeriesTransformer->Autoformer,TimeSeries->Autoformer
@@ -1181,7 +986,7 @@ class AutoformerEncoder(AutoformerPreTrainedModel):
         # expand attention_mask
         if attention_mask is not None:
             # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-            attention_mask = _expand_mask(attention_mask, inputs_embeds.dtype)
+            attention_mask = _prepare_4d_attention_mask(attention_mask, inputs_embeds.dtype)
 
         encoder_states = () if output_hidden_states else None
         all_attentions = () if output_attentions else None
@@ -1208,7 +1013,7 @@ class AutoformerEncoder(AutoformerPreTrainedModel):
                 layer_outputs = (None, None)
             else:
                 if self.gradient_checkpointing and self.training:
-                    layer_outputs = self.gradient_checkpointing_func(
+                    layer_outputs = self._gradient_checkpointing_func(
                         encoder_layer.__call__,
                         hidden_states,
                         attention_mask,
@@ -1266,29 +1071,6 @@ class AutoformerDecoder(AutoformerPreTrainedModel):
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.post_init()
-
-    def _prepare_decoder_attention_mask(self, attention_mask, input_shape, inputs_embeds, past_key_values_length):
-        # create causal mask
-        # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-        combined_attention_mask = None
-        if input_shape[-1] > 1:
-            combined_attention_mask = _make_causal_mask(
-                input_shape,
-                inputs_embeds.dtype,
-                device=inputs_embeds.device,
-                past_key_values_length=past_key_values_length,
-            ).to(inputs_embeds.device)
-
-        if attention_mask is not None:
-            # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-            expanded_attn_mask = _expand_mask(attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]).to(
-                inputs_embeds.device
-            )
-            combined_attention_mask = (
-                expanded_attn_mask if combined_attention_mask is None else expanded_attn_mask + combined_attention_mask
-            )
-
-        return combined_attention_mask
 
     def forward(
         self,
@@ -1379,7 +1161,9 @@ class AutoformerDecoder(AutoformerPreTrainedModel):
         # expand encoder attention mask
         if encoder_hidden_states is not None and encoder_attention_mask is not None:
             # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-            encoder_attention_mask = _expand_mask(encoder_attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1])
+            encoder_attention_mask = _prepare_4d_attention_mask(
+                encoder_attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]
+            )
 
         hidden_states = self.value_embedding(inputs_embeds)
         embed_pos = self.embed_positions(
@@ -1420,7 +1204,7 @@ class AutoformerDecoder(AutoformerPreTrainedModel):
                         "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
                     )
                     use_cache = False
-                layer_outputs = self.gradient_checkpointing_func(
+                layer_outputs = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     hidden_states,
                     attention_mask,
@@ -1482,20 +1266,17 @@ class AutoformerDecoder(AutoformerPreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    "The bare Autoformer Model outputting raw hidden-states without any specific head on top.",
-    AUTOFORMER_START_DOCSTRING,
-)
+@auto_docstring
 class AutoformerModel(AutoformerPreTrainedModel):
     def __init__(self, config: AutoformerConfig):
         super().__init__(config)
 
         if config.scaling == "mean" or config.scaling is True:
-            self.scaler = AutoformerMeanScaler(dim=1, keepdim=True)
+            self.scaler = AutoformerMeanScaler(config)
         elif config.scaling == "std":
-            self.scaler = AutoformerStdScaler(dim=1, keepdim=True)
+            self.scaler = AutoformerStdScaler(config)
         else:
-            self.scaler = AutoformerNOPScaler(dim=1, keepdim=True)
+            self.scaler = AutoformerNOPScaler(config)
 
         if config.num_static_categorical_features > 0:
             self.embedder = AutoformerFeatureEmbedder(
@@ -1660,8 +1441,7 @@ class AutoformerModel(AutoformerPreTrainedModel):
     def get_decoder(self):
         return self.decoder
 
-    @add_start_docstrings_to_model_forward(AUTOFORMER_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=AutoformerModelOutput, config_class=_CONFIG_FOR_DOC)
+    @auto_docstring
     def forward(
         self,
         past_values: torch.Tensor,
@@ -1683,7 +1463,74 @@ class AutoformerModel(AutoformerPreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[AutoformerModelOutput, Tuple]:
         r"""
-        Returns:
+        past_values (`torch.FloatTensor` of shape `(batch_size, sequence_length)`):
+            Past values of the time series, that serve as context in order to predict the future. These values may
+            contain lags, i.e. additional values from the past which are added in order to serve as "extra context".
+            The `past_values` is what the Transformer encoder gets as input (with optional additional features, such as
+            `static_categorical_features`, `static_real_features`, `past_time_features`).
+
+            The sequence length here is equal to `context_length` + `max(config.lags_sequence)`.
+
+            Missing values need to be replaced with zeros.
+        past_time_features (`torch.FloatTensor` of shape `(batch_size, sequence_length, num_features)`, *optional*):
+            Optional time features, which the model internally will add to `past_values`. These could be things like
+            "month of year", "day of the month", etc. encoded as vectors (for instance as Fourier features). These
+            could also be so-called "age" features, which basically help the model know "at which point in life" a
+            time-series is. Age features have small values for distant past time steps and increase monotonically the
+            more we approach the current time step.
+
+            These features serve as the "positional encodings" of the inputs. So contrary to a model like BERT, where
+            the position encodings are learned from scratch internally as parameters of the model, the Time Series
+            Transformer requires to provide additional time features.
+
+            The Autoformer only learns additional embeddings for `static_categorical_features`.
+        past_observed_mask (`torch.BoolTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Boolean mask to indicate which `past_values` were observed and which were missing. Mask values selected in
+            `[0, 1]`:
+
+            - 1 for values that are **observed**,
+            - 0 for values that are **missing** (i.e. NaNs that were replaced by zeros).
+        static_categorical_features (`torch.LongTensor` of shape `(batch_size, number of static categorical features)`, *optional*):
+            Optional static categorical features for which the model will learn an embedding, which it will add to the
+            values of the time series.
+
+            Static categorical features are features which have the same value for all time steps (static over time).
+
+            A typical example of a static categorical feature is a time series ID.
+        static_real_features (`torch.FloatTensor` of shape `(batch_size, number of static real features)`, *optional*):
+            Optional static real features which the model will add to the values of the time series.
+
+            Static real features are features which have the same value for all time steps (static over time).
+
+            A typical example of a static real feature is promotion information.
+        future_values (`torch.FloatTensor` of shape `(batch_size, prediction_length)`):
+            Future values of the time series, that serve as labels for the model. The `future_values` is what the
+            Transformer needs to learn to output, given the `past_values`.
+
+            See the demo notebook and code snippets for details.
+
+            Missing values need to be replaced with zeros.
+        future_time_features (`torch.FloatTensor` of shape `(batch_size, prediction_length, num_features)`, *optional*):
+            Optional time features, which the model internally will add to `future_values`. These could be things like
+            "month of year", "day of the month", etc. encoded as vectors (for instance as Fourier features). These
+            could also be so-called "age" features, which basically help the model know "at which point in life" a
+            time-series is. Age features have small values for distant past time steps and increase monotonically the
+            more we approach the current time step.
+
+            These features serve as the "positional encodings" of the inputs. So contrary to a model like BERT, where
+            the position encodings are learned from scratch internally as parameters of the model, the Time Series
+            Transformer requires to provide additional features.
+
+            The Autoformer only learns additional embeddings for `static_categorical_features`.
+        cross_attn_head_mask (`torch.Tensor` of shape `(decoder_layers, decoder_attention_heads)`, *optional*):
+            Mask to nullify selected heads of the cross-attention modules. Mask values selected in `[0, 1]`:
+
+            - 1 indicates the head is **not masked**,
+            - 0 indicates the head is **masked**.
+        encoder_outputs (`tuple(tuple(torch.FloatTensor)`, *optional*):
+            Tuple consists of `last_hidden_state`, `hidden_states` (*optional*) and `attentions` (*optional*)
+            `last_hidden_state` of shape `(batch_size, sequence_length, hidden_size)` (*optional*) is a sequence of
+            hidden-states at the output of the last layer of the encoder. Used in the cross-attention of the decoder.
 
         Examples:
 
@@ -1818,10 +1665,7 @@ class AutoformerModel(AutoformerPreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    "The Autoformer Model with a distribution head on top for time-series forecasting.",
-    AUTOFORMER_START_DOCSTRING,
-)
+@auto_docstring
 class AutoformerForPrediction(AutoformerPreTrainedModel):
     def __init__(self, config: AutoformerConfig):
         super().__init__(config)
@@ -1862,8 +1706,7 @@ class AutoformerForPrediction(AutoformerPreTrainedModel):
             sliced_params = [p[:, -trailing_n:] for p in params]
         return self.distribution_output.distribution(sliced_params, loc=loc, scale=scale)
 
-    @add_start_docstrings_to_model_forward(AUTOFORMER_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=Seq2SeqTSPredictionOutput, config_class=_CONFIG_FOR_DOC)
+    @auto_docstring
     def forward(
         self,
         past_values: torch.Tensor,
@@ -1886,7 +1729,82 @@ class AutoformerForPrediction(AutoformerPreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Seq2SeqTSPredictionOutput, Tuple]:
         r"""
-        Returns:
+        past_values (`torch.FloatTensor` of shape `(batch_size, sequence_length)`):
+            Past values of the time series, that serve as context in order to predict the future. These values may
+            contain lags, i.e. additional values from the past which are added in order to serve as "extra context".
+            The `past_values` is what the Transformer encoder gets as input (with optional additional features, such as
+            `static_categorical_features`, `static_real_features`, `past_time_features`).
+
+            The sequence length here is equal to `context_length` + `max(config.lags_sequence)`.
+
+            Missing values need to be replaced with zeros.
+        past_time_features (`torch.FloatTensor` of shape `(batch_size, sequence_length, num_features)`, *optional*):
+            Optional time features, which the model internally will add to `past_values`. These could be things like
+            "month of year", "day of the month", etc. encoded as vectors (for instance as Fourier features). These
+            could also be so-called "age" features, which basically help the model know "at which point in life" a
+            time-series is. Age features have small values for distant past time steps and increase monotonically the
+            more we approach the current time step.
+
+            These features serve as the "positional encodings" of the inputs. So contrary to a model like BERT, where
+            the position encodings are learned from scratch internally as parameters of the model, the Time Series
+            Transformer requires to provide additional time features.
+
+            The Autoformer only learns additional embeddings for `static_categorical_features`.
+        past_observed_mask (`torch.BoolTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Boolean mask to indicate which `past_values` were observed and which were missing. Mask values selected in
+            `[0, 1]`:
+
+            - 1 for values that are **observed**,
+            - 0 for values that are **missing** (i.e. NaNs that were replaced by zeros).
+        static_categorical_features (`torch.LongTensor` of shape `(batch_size, number of static categorical features)`, *optional*):
+            Optional static categorical features for which the model will learn an embedding, which it will add to the
+            values of the time series.
+
+            Static categorical features are features which have the same value for all time steps (static over time).
+
+            A typical example of a static categorical feature is a time series ID.
+        static_real_features (`torch.FloatTensor` of shape `(batch_size, number of static real features)`, *optional*):
+            Optional static real features which the model will add to the values of the time series.
+
+            Static real features are features which have the same value for all time steps (static over time).
+
+            A typical example of a static real feature is promotion information.
+        future_values (`torch.FloatTensor` of shape `(batch_size, prediction_length)`):
+            Future values of the time series, that serve as labels for the model. The `future_values` is what the
+            Transformer needs to learn to output, given the `past_values`.
+
+            See the demo notebook and code snippets for details.
+
+            Missing values need to be replaced with zeros.
+        future_time_features (`torch.FloatTensor` of shape `(batch_size, prediction_length, num_features)`, *optional*):
+            Optional time features, which the model internally will add to `future_values`. These could be things like
+            "month of year", "day of the month", etc. encoded as vectors (for instance as Fourier features). These
+            could also be so-called "age" features, which basically help the model know "at which point in life" a
+            time-series is. Age features have small values for distant past time steps and increase monotonically the
+            more we approach the current time step.
+
+            These features serve as the "positional encodings" of the inputs. So contrary to a model like BERT, where
+            the position encodings are learned from scratch internally as parameters of the model, the Time Series
+            Transformer requires to provide additional features.
+
+            The Autoformer only learns additional embeddings for `static_categorical_features`.
+        cross_attn_head_mask (`torch.Tensor` of shape `(decoder_layers, decoder_attention_heads)`, *optional*):
+            Mask to nullify selected heads of the cross-attention modules. Mask values selected in `[0, 1]`:
+
+            - 1 indicates the head is **not masked**,
+            - 0 indicates the head is **masked**.
+        encoder_outputs (`tuple(tuple(torch.FloatTensor)`, *optional*):
+            Tuple consists of `last_hidden_state`, `hidden_states` (*optional*) and `attentions` (*optional*)
+            `last_hidden_state` of shape `(batch_size, sequence_length, hidden_size)` (*optional*) is a sequence of
+            hidden-states at the output of the last layer of the encoder. Used in the cross-attention of the decoder.
+        future_observed_mask (`torch.BoolTensor` of shape `(batch_size, sequence_length)` or `(batch_size, sequence_length, input_size)`, *optional*):
+            Boolean mask to indicate which `future_values` were observed and which were missing. Mask values selected
+            in `[0, 1]`:
+
+            - 1 for values that are **observed**,
+            - 0 for values that are **missing** (i.e. NaNs that were replaced by zeros).
+
+            This mask is used to filter out missing values for the final loss calculation.
 
         Examples:
 
@@ -1909,7 +1827,6 @@ class AutoformerForPrediction(AutoformerPreTrainedModel):
         ...     past_time_features=batch["past_time_features"],
         ...     past_observed_mask=batch["past_observed_mask"],
         ...     static_categorical_features=batch["static_categorical_features"],
-        ...     static_real_features=batch["static_real_features"],
         ...     future_values=batch["future_values"],
         ...     future_time_features=batch["future_time_features"],
         ... )
@@ -1925,12 +1842,54 @@ class AutoformerForPrediction(AutoformerPreTrainedModel):
         ...     past_time_features=batch["past_time_features"],
         ...     past_observed_mask=batch["past_observed_mask"],
         ...     static_categorical_features=batch["static_categorical_features"],
-        ...     static_real_features=batch["static_real_features"],
         ...     future_time_features=batch["future_time_features"],
         ... )
 
         >>> mean_prediction = outputs.sequences.mean(dim=1)
-        ```"""
+        ```
+
+        <Tip>
+
+        The AutoformerForPrediction can also use static_real_features. To do so, set num_static_real_features in
+        AutoformerConfig based on number of such features in the dataset (in case of tourism_monthly dataset it
+        is equal to 1), initialize the model and call as shown below:
+
+        ```
+        >>> from huggingface_hub import hf_hub_download
+        >>> import torch
+        >>> from transformers import AutoformerConfig, AutoformerForPrediction
+
+        >>> file = hf_hub_download(
+        ...     repo_id="hf-internal-testing/tourism-monthly-batch", filename="train-batch.pt", repo_type="dataset"
+        ... )
+        >>> batch = torch.load(file)
+
+        >>> # check number of static real features
+        >>> num_static_real_features = batch["static_real_features"].shape[-1]
+
+        >>> # load configuration of pretrained model and override num_static_real_features
+        >>> configuration = AutoformerConfig.from_pretrained(
+        ...     "huggingface/autoformer-tourism-monthly",
+        ...     num_static_real_features=num_static_real_features,
+        ... )
+        >>> # we also need to update feature_size as it is not recalculated
+        >>> configuration.feature_size += num_static_real_features
+
+        >>> model = AutoformerForPrediction(configuration)
+
+        >>> outputs = model(
+        ...     past_values=batch["past_values"],
+        ...     past_time_features=batch["past_time_features"],
+        ...     past_observed_mask=batch["past_observed_mask"],
+        ...     static_categorical_features=batch["static_categorical_features"],
+        ...     static_real_features=batch["static_real_features"],
+        ...     future_values=batch["future_values"],
+        ...     future_time_features=batch["future_time_features"],
+        ... )
+        ```
+
+        </Tip>
+        """
 
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         if future_values is not None:
@@ -1960,7 +1919,7 @@ class AutoformerForPrediction(AutoformerPreTrainedModel):
         params = None
         if future_values is not None:
             # outputs.last_hidden_state and trend
-            # loc is 4rd last and scale is 3rd last output
+            # loc is 4th last and scale is 3rd last output
             params = self.output_params(outputs[0] + outputs[1])
             distribution = self.output_distribution(params, loc=outputs[-3], scale=outputs[-2])
 
@@ -2171,3 +2130,6 @@ class AutoformerForPrediction(AutoformerPreTrainedModel):
                 (-1, num_parallel_samples, self.config.prediction_length) + self.target_shape,
             )
         )
+
+
+__all__ = ["AutoformerForPrediction", "AutoformerModel", "AutoformerPreTrainedModel"]

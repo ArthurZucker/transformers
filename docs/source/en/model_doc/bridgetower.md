@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # BridgeTower
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The BridgeTower model was proposed in [BridgeTower: Building Bridges Between Encoders in Vision-Language Representative Learning](https://arxiv.org/abs/2206.08657) by Xiao Xu, Chenfei Wu, Shachar Rosenman, Vasudev Lal, Wanxiang Che, Nan Duan. The goal of this model is to build a
@@ -37,7 +41,9 @@ alt="drawing" width="600"/>
 
 <small> BridgeTower architecture. Taken from the <a href="https://arxiv.org/abs/2206.08657">original paper.</a> </small>
 
-## Usage
+This model was contributed by [Anahita Bhiwandiwalla](https://huggingface.co/anahita-b), [Tiep Le](https://huggingface.co/Tile) and [Shaoyen Tseng](https://huggingface.co/shaoyent). The original code can be found [here](https://github.com/microsoft/BridgeTower).
+
+## Usage tips and examples
 
 BridgeTower consists of a visual encoder, a textual encoder and cross-modal encoder with multiple lightweight bridge layers.
 The goal of this approach was to build a bridge between each uni-modal encoder and the cross-modal encoder to enable comprehensive and detailed interaction at each layer of the cross-modal encoder.
@@ -116,9 +122,6 @@ The following example shows how to run masked language modeling using [`BridgeTo
 .a cat looking out of the window.
 ```
 
-This model was contributed by [Anahita Bhiwandiwalla](https://huggingface.co/anahita-b), [Tiep Le](https://huggingface.co/Tile) and [Shaoyen Tseng](https://huggingface.co/shaoyent). The original code can be found [here](https://github.com/microsoft/BridgeTower).
-
-
 Tips:
 
 - This implementation of BridgeTower uses [`RobertaTokenizer`] to generate text embeddings and OpenAI's CLIP/ViT model to compute visual embeddings.
@@ -142,6 +145,11 @@ Tips:
 ## BridgeTowerImageProcessor
 
 [[autodoc]] BridgeTowerImageProcessor
+    - preprocess
+
+## BridgeTowerImageProcessorFast
+
+[[autodoc]] BridgeTowerImageProcessorFast
     - preprocess
 
 ## BridgeTowerProcessor

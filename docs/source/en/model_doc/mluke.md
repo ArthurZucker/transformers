@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # mLUKE
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The mLUKE model was proposed in [mLUKE: The Power of Entity Representations in Multilingual Pretrained Language Models](https://arxiv.org/abs/2110.08151) by Ryokan Ri, Ikuya Yamada, and Yoshimasa Tsuruoka. It's a multilingual extension
@@ -37,6 +41,10 @@ representations into the input allows us to extract more language-agnostic featu
 multilingual cloze prompt task with the mLAMA dataset. We show that entity-based prompt elicits correct factual
 knowledge more likely than using only word representations.*
 
+This model was contributed by [ryo0634](https://huggingface.co/ryo0634). The original code can be found [here](https://github.com/studio-ousia/luke).
+
+## Usage tips
+
 One can directly plug in the weights of mLUKE into a LUKE model, like so:
 
 ```python
@@ -53,10 +61,12 @@ from transformers import MLukeTokenizer
 tokenizer = MLukeTokenizer.from_pretrained("studio-ousia/mluke-base")
 ```
 
+<Tip>
+
 As mLUKE's architecture is equivalent to that of LUKE, one can refer to [LUKE's documentation page](luke) for all
 tips, code examples and notebooks.
 
-This model was contributed by [ryo0634](https://huggingface.co/ryo0634). The original code can be found [here](https://github.com/studio-ousia/luke).
+</Tip>
 
 ## MLukeTokenizer
 

@@ -17,12 +17,9 @@ rendered properly in your Markdown viewer.
 # DPR
 
 <div class="flex flex-wrap space-x-1">
-<a href="https://huggingface.co/models?filter=dpr">
-<img alt="Models" src="https://img.shields.io/badge/All_model_pages-dpr-blueviolet">
-</a>
-<a href="https://huggingface.co/spaces/docs-demos/dpr-question_encoder-bert-base-multilingual">
-<img alt="Spaces" src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue">
-</a>
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
+<img alt="SDPA" src="https://img.shields.io/badge/SDPA-DE3412?style=flat&logo=pytorch&logoColor=white">
 </div>
 
 ## Overview
@@ -43,7 +40,8 @@ benchmarks.*
 
 This model was contributed by [lhoestq](https://huggingface.co/lhoestq). The original code can be found [here](https://github.com/facebookresearch/DPR).
 
-Tips:
+## Usage tips
+
 - DPR consists in three models:
 
     * Question encoder: encode questions as vectors
@@ -86,6 +84,9 @@ Tips:
 
 [[autodoc]] models.dpr.modeling_dpr.DPRReaderOutput
 
+<frameworkcontent>
+<pt>
+
 ## DPRContextEncoder
 
 [[autodoc]] DPRContextEncoder
@@ -101,6 +102,9 @@ Tips:
 [[autodoc]] DPRReader
     - forward
 
+</pt>
+<tf>
+
 ## TFDPRContextEncoder
 
 [[autodoc]] TFDPRContextEncoder
@@ -115,3 +119,7 @@ Tips:
 
 [[autodoc]] TFDPRReader
     - call
+
+</tf>
+</frameworkcontent>
+

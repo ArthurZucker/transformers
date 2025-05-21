@@ -12,8 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch MobileNetV2 model."""
-
+"""PyTorch MobileNetV2 model."""
 
 from typing import Optional, Union
 
@@ -28,38 +27,11 @@ from ...modeling_outputs import (
     SemanticSegmenterOutput,
 )
 from ...modeling_utils import PreTrainedModel
-from ...utils import (
-    add_code_sample_docstrings,
-    add_start_docstrings,
-    add_start_docstrings_to_model_forward,
-    logging,
-    replace_return_docstrings,
-)
+from ...utils import auto_docstring, logging
 from .configuration_mobilenet_v2 import MobileNetV2Config
 
 
 logger = logging.get_logger(__name__)
-
-
-# General docstring
-_CONFIG_FOR_DOC = "MobileNetV2Config"
-
-# Base docstring
-_CHECKPOINT_FOR_DOC = "google/mobilenet_v2_1.0_224"
-_EXPECTED_OUTPUT_SHAPE = [1, 1280, 7, 7]
-
-# Image classification docstring
-_IMAGE_CLASS_CHECKPOINT = "google/mobilenet_v2_1.0_224"
-_IMAGE_CLASS_EXPECTED_OUTPUT = "tabby, tabby cat"
-
-
-MOBILENET_V2_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "google/mobilenet_v2_1.4_224",
-    "google/mobilenet_v2_1.0_224",
-    "google/mobilenet_v2_0.37_160",
-    "google/mobilenet_v2_0.35_96",
-    # See all MobileNetV2 models at https://huggingface.co/models?filter=mobilenet_v2
-]
 
 
 def _build_tf_to_pytorch_map(model, config, tf_weights=None):
@@ -143,29 +115,29 @@ def _build_tf_to_pytorch_map(model, config, tf_weights=None):
         tf_to_pt_map[prefix + "BatchNorm/beta"] = model.segmentation_head.conv_pool.normalization.bias
         tf_to_pt_map[prefix + "BatchNorm/gamma"] = model.segmentation_head.conv_pool.normalization.weight
         tf_to_pt_map[prefix + "BatchNorm/moving_mean"] = model.segmentation_head.conv_pool.normalization.running_mean
-        tf_to_pt_map[
-            prefix + "BatchNorm/moving_variance"
-        ] = model.segmentation_head.conv_pool.normalization.running_var
+        tf_to_pt_map[prefix + "BatchNorm/moving_variance"] = (
+            model.segmentation_head.conv_pool.normalization.running_var
+        )
 
         prefix = "aspp0/"
         tf_to_pt_map[prefix + "weights"] = model.segmentation_head.conv_aspp.convolution.weight
         tf_to_pt_map[prefix + "BatchNorm/beta"] = model.segmentation_head.conv_aspp.normalization.bias
         tf_to_pt_map[prefix + "BatchNorm/gamma"] = model.segmentation_head.conv_aspp.normalization.weight
         tf_to_pt_map[prefix + "BatchNorm/moving_mean"] = model.segmentation_head.conv_aspp.normalization.running_mean
-        tf_to_pt_map[
-            prefix + "BatchNorm/moving_variance"
-        ] = model.segmentation_head.conv_aspp.normalization.running_var
+        tf_to_pt_map[prefix + "BatchNorm/moving_variance"] = (
+            model.segmentation_head.conv_aspp.normalization.running_var
+        )
 
         prefix = "concat_projection/"
         tf_to_pt_map[prefix + "weights"] = model.segmentation_head.conv_projection.convolution.weight
         tf_to_pt_map[prefix + "BatchNorm/beta"] = model.segmentation_head.conv_projection.normalization.bias
         tf_to_pt_map[prefix + "BatchNorm/gamma"] = model.segmentation_head.conv_projection.normalization.weight
-        tf_to_pt_map[
-            prefix + "BatchNorm/moving_mean"
-        ] = model.segmentation_head.conv_projection.normalization.running_mean
-        tf_to_pt_map[
-            prefix + "BatchNorm/moving_variance"
-        ] = model.segmentation_head.conv_projection.normalization.running_var
+        tf_to_pt_map[prefix + "BatchNorm/moving_mean"] = (
+            model.segmentation_head.conv_projection.normalization.running_mean
+        )
+        tf_to_pt_map[prefix + "BatchNorm/moving_variance"] = (
+            model.segmentation_head.conv_projection.normalization.running_var
+        )
 
         prefix = "logits/semantic/"
         tf_to_pt_map[ema(prefix + "weights")] = model.segmentation_head.classifier.convolution.weight
@@ -448,17 +420,14 @@ class MobileNetV2Stem(nn.Module):
         return features
 
 
+@auto_docstring
 class MobileNetV2PreTrainedModel(PreTrainedModel):
-    """
-    An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
-    models.
-    """
-
     config_class = MobileNetV2Config
     load_tf_weights = load_tf_weights_in_mobilenet_v2
     base_model_prefix = "mobilenet_v2"
     main_input_name = "pixel_values"
     supports_gradient_checkpointing = False
+    _no_split_modules = []
 
     def _init_weights(self, module: Union[nn.Linear, nn.Conv2d]) -> None:
         """Initialize the weights"""
@@ -471,36 +440,13 @@ class MobileNetV2PreTrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
 
 
-MOBILENET_V2_START_DOCSTRING = r"""
-    This model is a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass. Use it
-    as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage and
-    behavior.
-
-    Parameters:
-        config ([`MobileNetV2Config`]): Model configuration class with all the parameters of the model.
-            Initializing with a config file does not load the weights associated with the model, only the
-            configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
-"""
-
-MOBILENET_V2_INPUTS_DOCSTRING = r"""
-    Args:
-        pixel_values (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)`):
-            Pixel values. Pixel values can be obtained using [`AutoImageProcessor`]. See
-            [`MobileNetV2ImageProcessor.__call__`] for details.
-        output_hidden_states (`bool`, *optional*):
-            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
-            more detail.
-        return_dict (`bool`, *optional*):
-            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-"""
-
-
-@add_start_docstrings(
-    "The bare MobileNetV2 model outputting raw hidden-states without any specific head on top.",
-    MOBILENET_V2_START_DOCSTRING,
-)
+@auto_docstring
 class MobileNetV2Model(MobileNetV2PreTrainedModel):
     def __init__(self, config: MobileNetV2Config, add_pooling_layer: bool = True):
+        r"""
+        add_pooling_layer (bool, *optional*, defaults to `True`):
+            Whether to add a pooling layer
+        """
         super().__init__(config)
         self.config = config
 
@@ -563,14 +509,7 @@ class MobileNetV2Model(MobileNetV2PreTrainedModel):
     def _prune_heads(self, heads_to_prune):
         raise NotImplementedError
 
-    @add_start_docstrings_to_model_forward(MOBILENET_V2_INPUTS_DOCSTRING)
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPoolingAndNoAttention,
-        config_class=_CONFIG_FOR_DOC,
-        modality="vision",
-        expected_output=_EXPECTED_OUTPUT_SHAPE,
-    )
+    @auto_docstring
     def forward(
         self,
         pixel_values: Optional[torch.Tensor] = None,
@@ -612,12 +551,11 @@ class MobileNetV2Model(MobileNetV2PreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    """
+@auto_docstring(
+    custom_intro="""
     MobileNetV2 model with an image classification head on top (a linear layer on top of the pooled features), e.g. for
     ImageNet.
-    """,
-    MOBILENET_V2_START_DOCSTRING,
+    """
 )
 class MobileNetV2ForImageClassification(MobileNetV2PreTrainedModel):
     def __init__(self, config: MobileNetV2Config) -> None:
@@ -635,13 +573,7 @@ class MobileNetV2ForImageClassification(MobileNetV2PreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @add_start_docstrings_to_model_forward(MOBILENET_V2_INPUTS_DOCSTRING)
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=ImageClassifierOutputWithNoAttention,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output=_IMAGE_CLASS_EXPECTED_OUTPUT,
-    )
+    @auto_docstring
     def forward(
         self,
         pixel_values: Optional[torch.Tensor] = None,
@@ -772,11 +704,10 @@ class MobileNetV2DeepLabV3Plus(nn.Module):
         return features
 
 
-@add_start_docstrings(
-    """
+@auto_docstring(
+    custom_intro="""
     MobileNetV2 model with a semantic segmentation head on top, e.g. for Pascal VOC.
-    """,
-    MOBILENET_V2_START_DOCSTRING,
+    """
 )
 class MobileNetV2ForSemanticSegmentation(MobileNetV2PreTrainedModel):
     def __init__(self, config: MobileNetV2Config) -> None:
@@ -789,8 +720,7 @@ class MobileNetV2ForSemanticSegmentation(MobileNetV2PreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @add_start_docstrings_to_model_forward(MOBILENET_V2_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=SemanticSegmenterOutput, config_class=_CONFIG_FOR_DOC)
+    @auto_docstring
     def forward(
         self,
         pixel_values: Optional[torch.Tensor] = None,
@@ -802,8 +732,6 @@ class MobileNetV2ForSemanticSegmentation(MobileNetV2PreTrainedModel):
         labels (`torch.LongTensor` of shape `(batch_size, height, width)`, *optional*):
             Ground truth semantic segmentation maps for computing the loss. Indices should be in `[0, ...,
             config.num_labels - 1]`. If `config.num_labels > 1`, a classification loss is computed (Cross-Entropy).
-
-        Returns:
 
         Examples:
 
@@ -831,6 +759,9 @@ class MobileNetV2ForSemanticSegmentation(MobileNetV2PreTrainedModel):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        if labels is not None and self.config.num_labels == 1:
+            raise ValueError("The number of labels should be greater than one")
+
         outputs = self.mobilenet_v2(
             pixel_values,
             output_hidden_states=True,  # we need the intermediate hidden states
@@ -843,15 +774,12 @@ class MobileNetV2ForSemanticSegmentation(MobileNetV2PreTrainedModel):
 
         loss = None
         if labels is not None:
-            if self.config.num_labels == 1:
-                raise ValueError("The number of labels should be greater than one")
-            else:
-                # upsample logits to the images' original size
-                upsampled_logits = nn.functional.interpolate(
-                    logits, size=labels.shape[-2:], mode="bilinear", align_corners=False
-                )
-                loss_fct = CrossEntropyLoss(ignore_index=self.config.semantic_loss_ignore_index)
-                loss = loss_fct(upsampled_logits, labels)
+            # upsample logits to the images' original size
+            upsampled_logits = nn.functional.interpolate(
+                logits, size=labels.shape[-2:], mode="bilinear", align_corners=False
+            )
+            loss_fct = CrossEntropyLoss(ignore_index=self.config.semantic_loss_ignore_index)
+            loss = loss_fct(upsampled_logits, labels)
 
         if not return_dict:
             if output_hidden_states:
@@ -866,3 +794,12 @@ class MobileNetV2ForSemanticSegmentation(MobileNetV2PreTrainedModel):
             hidden_states=outputs.hidden_states if output_hidden_states else None,
             attentions=None,
         )
+
+
+__all__ = [
+    "MobileNetV2ForImageClassification",
+    "MobileNetV2ForSemanticSegmentation",
+    "MobileNetV2Model",
+    "MobileNetV2PreTrainedModel",
+    "load_tf_weights_in_mobilenet_v2",
+]

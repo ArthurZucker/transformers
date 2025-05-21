@@ -13,12 +13,13 @@
 # limitations under the License.
 
 import unittest
+from functools import lru_cache
 
 from transformers import PegasusTokenizer, PegasusTokenizerFast
 from transformers.testing_utils import get_tests_dir, require_sentencepiece, require_tokenizers, require_torch, slow
 from transformers.utils import cached_property
 
-from ...test_tokenization_common import TokenizerTesterMixin
+from ...test_tokenization_common import TokenizerTesterMixin, use_cache_if_possible
 
 
 SAMPLE_VOCAB = get_tests_dir("fixtures/test_sentencepiece_no_bos.model")
@@ -27,24 +28,30 @@ SAMPLE_VOCAB = get_tests_dir("fixtures/test_sentencepiece_no_bos.model")
 @require_sentencepiece
 @require_tokenizers
 class PegasusTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
+    from_pretrained_id = "google/pegasus-xsum"
     tokenizer_class = PegasusTokenizer
     rust_tokenizer_class = PegasusTokenizerFast
     test_rust_tokenizer = True
     test_sentencepiece = True
 
-    def setUp(self):
-        super().setUp()
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
 
         # We have a SentencePiece fixture for testing
         tokenizer = PegasusTokenizer(SAMPLE_VOCAB)
-        tokenizer.save_pretrained(self.tmpdirname)
+        tokenizer.save_pretrained(cls.tmpdirname)
 
     @cached_property
     def _large_tokenizer(self):
         return PegasusTokenizer.from_pretrained("google/pegasus-large")
 
-    def get_tokenizer(self, **kwargs) -> PegasusTokenizer:
-        return PegasusTokenizer.from_pretrained(self.tmpdirname, **kwargs)
+    @classmethod
+    @use_cache_if_possible
+    @lru_cache(maxsize=64)
+    def get_tokenizer(cls, pretrained_name=None, **kwargs) -> PegasusTokenizer:
+        pretrained_name = pretrained_name or cls.tmpdirname
+        return PegasusTokenizer.from_pretrained(pretrained_name, **kwargs)
 
     def get_input_output_texts(self, tokenizer):
         return ("This is a test", "This is a test")
@@ -69,8 +76,8 @@ class PegasusTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
         self.assertEqual(self.get_tokenizer().vocab_size, 1_103)
 
     def test_mask_tokens_rust_pegasus(self):
-        rust_tokenizer = self.rust_tokenizer_class.from_pretrained(self.tmpdirname)
-        py_tokenizer = self.tokenizer_class.from_pretrained(self.tmpdirname)
+        rust_tokenizer = self.get_rust_tokenizer(self.tmpdirname)
+        py_tokenizer = self.get_tokenizer(self.tmpdirname)
         raw_input_str = (
             "Let's see which <unk> is the better <unk_token_11> one <mask_1> It seems like this <mask_2> was important"
             " </s> <pad> <pad> <pad>"
@@ -119,9 +126,7 @@ class PegasusTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
 
     @slow
     def test_tokenizer_integration(self):
-        # fmt: off
-        expected_encoding = {'input_ids': [[38979, 143, 18485, 606, 130, 26669, 87686, 121, 54189, 1129, 111, 26669, 87686, 121, 9114, 14787, 121, 13249, 158, 592, 956, 121, 14621, 31576, 143, 62613, 108, 9688, 930, 43430, 11562, 62613, 304, 108, 11443, 897, 108, 9314, 17415, 63399, 108, 11443, 7614, 18316, 118, 4284, 7148, 12430, 143, 1400, 25703, 158, 111, 4284, 7148, 11772, 143, 21297, 1064, 158, 122, 204, 3506, 1754, 1133, 14787, 1581, 115, 33224, 4482, 111, 1355, 110, 29173, 317, 50833, 108, 20147, 94665, 111, 77198, 107, 1], [110, 62613, 117, 638, 112, 1133, 121, 20098, 1355, 79050, 13872, 135, 1596, 53541, 1352, 141, 13039, 5542, 124, 302, 518, 111, 268, 2956, 115, 149, 4427, 107, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [139, 1235, 2799, 18289, 17780, 204, 109, 9474, 1296, 107, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]], 'attention_mask': [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]}  # noqa: E501
-        # fmt: on
+        expected_encoding = {'input_ids': [[38979, 143, 18485, 606, 130, 26669, 87686, 121, 54189, 1129, 111, 26669, 87686, 121, 9114, 14787, 121, 13249, 158, 592, 956, 121, 14621, 31576, 143, 62613, 108, 9688, 930, 43430, 11562, 62613, 304, 108, 11443, 897, 108, 9314, 17415, 63399, 108, 11443, 7614, 18316, 118, 4284, 7148, 12430, 143, 1400, 25703, 158, 111, 4284, 7148, 11772, 143, 21297, 1064, 158, 122, 204, 3506, 1754, 1133, 14787, 1581, 115, 33224, 4482, 111, 1355, 110, 29173, 317, 50833, 108, 20147, 94665, 111, 77198, 107, 1], [110, 62613, 117, 638, 112, 1133, 121, 20098, 1355, 79050, 13872, 135, 1596, 53541, 1352, 141, 13039, 5542, 124, 302, 518, 111, 268, 2956, 115, 149, 4427, 107, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [139, 1235, 2799, 18289, 17780, 204, 109, 9474, 1296, 107, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]], 'attention_mask': [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]}  # fmt: skip
 
         self.tokenizer_integration_test_util(
             expected_encoding=expected_encoding,
@@ -129,39 +134,41 @@ class PegasusTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
             revision="ba85d0851d708441f91440d509690f1ab6353415",
         )
 
-    # @unittest.skip("We have to use from_slow")
-    # def test_added_tokens_serialization(self):
-    #     pass
-
 
 @require_sentencepiece
 @require_tokenizers
 class BigBirdPegasusTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
+    from_pretrained_id = "google/pegasus-xsum"
     tokenizer_class = PegasusTokenizer
     rust_tokenizer_class = PegasusTokenizerFast
     test_rust_tokenizer = True
     test_sentencepiece = True
 
-    def setUp(self):
-        super().setUp()
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
 
         # We have a SentencePiece fixture for testing
         tokenizer = PegasusTokenizer(SAMPLE_VOCAB, offset=0, mask_token_sent=None, mask_token="[MASK]")
-        tokenizer.save_pretrained(self.tmpdirname)
+        tokenizer.save_pretrained(cls.tmpdirname)
 
     @cached_property
     def _large_tokenizer(self):
         return PegasusTokenizer.from_pretrained("google/bigbird-pegasus-large-arxiv")
 
-    def get_tokenizer(self, **kwargs) -> PegasusTokenizer:
-        return PegasusTokenizer.from_pretrained(self.tmpdirname, **kwargs)
+    @classmethod
+    @use_cache_if_possible
+    @lru_cache(maxsize=64)
+    def get_tokenizer(cls, pretrained_name=None, **kwargs) -> PegasusTokenizer:
+        pretrained_name = pretrained_name or cls.tmpdirname
+        return PegasusTokenizer.from_pretrained(pretrained_name, **kwargs)
 
     def get_input_output_texts(self, tokenizer):
         return ("This is a test", "This is a test")
 
     def test_mask_tokens_rust_pegasus(self):
-        rust_tokenizer = self.rust_tokenizer_class.from_pretrained(self.tmpdirname)
-        py_tokenizer = self.tokenizer_class.from_pretrained(self.tmpdirname)
+        rust_tokenizer = self.get_rust_tokenizer(self.tmpdirname)
+        py_tokenizer = self.get_tokenizer(self.tmpdirname)
         raw_input_str = (
             "Let's see which <unk> is the better <unk_token> one [MASK] It seems like this [MASK] was important </s>"
             " <pad> <pad> <pad>"
@@ -215,7 +222,3 @@ class BigBirdPegasusTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
             token_ids,
             [182, 117, 142, 587, 4211, 120, 117, 263, 112, 804, 109, 856, 25016, 3137, 464, 109, 26955, 3137, 1],
         )
-
-    # @unittest.skip("We have to use from_slow")
-    # def test_added_tokens_serialization(self):
-    #     pass

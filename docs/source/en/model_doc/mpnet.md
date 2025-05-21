@@ -16,6 +16,11 @@ rendered properly in your Markdown viewer.
 
 # MPNet
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
+</div>
+
 ## Overview
 
 The MPNet model was proposed in [MPNet: Masked and Permuted Pre-training for Language Understanding](https://arxiv.org/abs/2004.09297) by Kaitao Song, Xu Tan, Tao Qin, Jianfeng Lu, Tie-Yan Liu.
@@ -37,14 +42,14 @@ down-streaming tasks (GLUE, SQuAD, etc). Experimental results show that MPNet ou
 margin, and achieves better results on these tasks compared with previous state-of-the-art pre-trained methods (e.g.,
 BERT, XLNet, RoBERTa) under the same model setting.*
 
-Tips:
-
-- MPNet doesn't have `token_type_ids`, you don't need to indicate which token belongs to which segment. just
-  separate your segments with the separation token `tokenizer.sep_token` (or `[sep]`).
-
 The original code can be found [here](https://github.com/microsoft/MPNet).
 
-## Documentation resources
+## Usage tips
+
+MPNet doesn't have `token_type_ids`, you don't need to indicate which token belongs to which segment. Just 
+separate your segments with the separation token `tokenizer.sep_token` (or `[sep]`).
+
+## Resources
 
 - [Text classification task guide](../tasks/sequence_classification)
 - [Token classification task guide](../tasks/token_classification)
@@ -67,6 +72,9 @@ The original code can be found [here](https://github.com/microsoft/MPNet).
 ## MPNetTokenizerFast
 
 [[autodoc]] MPNetTokenizerFast
+
+<frameworkcontent>
+<pt>
 
 ## MPNetModel
 
@@ -98,6 +106,9 @@ The original code can be found [here](https://github.com/microsoft/MPNet).
 [[autodoc]] MPNetForQuestionAnswering
     - forward
 
+</pt>
+<tf>
+
 ## TFMPNetModel
 
 [[autodoc]] TFMPNetModel
@@ -127,3 +138,6 @@ The original code can be found [here](https://github.com/microsoft/MPNet).
 
 [[autodoc]] TFMPNetForQuestionAnswering
     - call
+
+</tf>
+</frameworkcontent>

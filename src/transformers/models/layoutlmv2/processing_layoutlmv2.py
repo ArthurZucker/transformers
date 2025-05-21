@@ -43,6 +43,7 @@ class LayoutLMv2Processor(ProcessorMixin):
         tokenizer (`LayoutLMv2Tokenizer` or `LayoutLMv2TokenizerFast`, *optional*):
             An instance of [`LayoutLMv2Tokenizer`] or [`LayoutLMv2TokenizerFast`]. The tokenizer is a required input.
     """
+
     attributes = ["image_processor", "tokenizer"]
     image_processor_class = "LayoutLMv2ImageProcessor"
     tokenizer_class = ("LayoutLMv2Tokenizer", "LayoutLMv2TokenizerFast")
@@ -70,7 +71,7 @@ class LayoutLMv2Processor(ProcessorMixin):
         images,
         text: Union[TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]] = None,
         text_pair: Optional[Union[PreTokenizedInput, List[PreTokenizedInput]]] = None,
-        boxes: Union[List[List[int]], List[List[List[int]]]] = None,
+        boxes: Optional[Union[List[List[int]], List[List[List[int]]]]] = None,
         word_labels: Optional[Union[List[int], List[List[int]]]] = None,
         add_special_tokens: bool = True,
         padding: Union[bool, str, PaddingStrategy] = False,
@@ -198,3 +199,6 @@ class LayoutLMv2Processor(ProcessorMixin):
             FutureWarning,
         )
         return self.image_processor
+
+
+__all__ = ["LayoutLMv2Processor"]

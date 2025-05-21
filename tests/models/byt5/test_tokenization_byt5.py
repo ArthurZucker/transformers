@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2020 Google T5 Authors and HuggingFace Inc. team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,12 +18,12 @@ import re
 import shutil
 import tempfile
 import unittest
-from typing import Tuple
+from functools import lru_cache
 
 from transformers import AddedToken, BatchEncoding, ByT5Tokenizer
 from transformers.utils import cached_property, is_tf_available, is_torch_available
 
-from ...test_tokenization_common import TokenizerTesterMixin
+from ...test_tokenization_common import TokenizerTesterMixin, use_cache_if_possible
 
 
 if is_torch_available():
@@ -39,19 +38,24 @@ class ByT5TokenizationTest(TokenizerTesterMixin, unittest.TestCase):
     tokenizer_class = ByT5Tokenizer
     test_rust_tokenizer = False
 
-    def setUp(self):
-        super().setUp()
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
         tokenizer = ByT5Tokenizer()
-        tokenizer.save_pretrained(self.tmpdirname)
+        tokenizer.save_pretrained(cls.tmpdirname)
 
     @cached_property
     def t5_base_tokenizer(self):
         return ByT5Tokenizer.from_pretrained("google/byt5-small")
 
-    def get_tokenizer(self, **kwargs) -> ByT5Tokenizer:
-        return self.tokenizer_class.from_pretrained(self.tmpdirname, **kwargs)
+    @classmethod
+    @use_cache_if_possible
+    @lru_cache(maxsize=64)
+    def get_tokenizer(cls, pretrained_name=None, **kwargs) -> ByT5Tokenizer:
+        pretrained_name = pretrained_name or cls.tmpdirname
+        return cls.tokenizer_class.from_pretrained(pretrained_name, **kwargs)
 
-    def get_clean_sequence(self, tokenizer, with_prefix_space=False, max_length=20, min_length=5) -> Tuple[str, list]:
+    def get_clean_sequence(self, tokenizer, with_prefix_space=False, max_length=20, min_length=5) -> tuple[str, list]:
         # XXX The default common tokenizer tests assume that every ID is decodable on its own.
         # This assumption is invalid for ByT5 because single bytes might not be
         # valid utf-8 (byte 128 for instance).
@@ -119,9 +123,7 @@ class ByT5TokenizationTest(TokenizerTesterMixin, unittest.TestCase):
     def test_prepare_batch_integration(self):
         tokenizer = self.t5_base_tokenizer
         src_text = ["A long paragraph for summarization.", "Another paragraph for summarization."]
-        # fmt: off
-        expected_src_tokens = [68, 35, 111, 114, 113, 106, 35, 115, 100, 117, 100, 106, 117, 100, 115, 107, 35, 105, 114, 117, 35, 118, 120, 112, 112, 100, 117, 108, 125, 100, 119, 108, 114, 113, 49, 1, 0]
-        # fmt: on
+        expected_src_tokens = [68, 35, 111, 114, 113, 106, 35, 115, 100, 117, 100, 106, 117, 100, 115, 107, 35, 105, 114, 117, 35, 118, 120, 112, 112, 100, 117, 108, 125, 100, 119, 108, 114, 113, 49, 1, 0]  # fmt: skip
         batch = tokenizer(src_text, padding=True, return_tensors=FRAMEWORK)
         self.assertIsInstance(batch, BatchEncoding)
 
@@ -160,17 +162,15 @@ class ByT5TokenizationTest(TokenizerTesterMixin, unittest.TestCase):
         tokenizer = self.t5_base_tokenizer
         src_text = ["A long paragraph for summarization. </s>"]
         tgt_text = ["Summary of the text. </s>"]
-        # fmt: off
-        expected_src_tokens = [68, 35, 111, 114, 113, 106, 35, 115, 100, 117, 100, 106, 117, 100, 115, 107, 35, 105, 114, 117, 35, 118, 120, 112, 112, 100, 117, 108, 125, 100, 119, 108, 114, 113, 49, 35, 1]
-        expected_tgt_tokens = [86, 120, 112, 112, 100, 117, 124, 35, 114, 105, 35, 119, 107, 104, 35, 119, 104, 123, 119, 49, 35, 1]
-        # fmt: on
+        expected_src_tokens = [68, 35, 111, 114, 113, 106, 35, 115, 100, 117, 100, 106, 117, 100, 115, 107, 35, 105, 114, 117, 35, 118, 120, 112, 112, 100, 117, 108, 125, 100, 119, 108, 114, 113, 49, 35, 1]  # fmt: skip
+        expected_tgt_tokens = [86, 120, 112, 112, 100, 117, 124, 35, 114, 105, 35, 119, 107, 104, 35, 119, 104, 123, 119, 49, 35, 1]  # fmt: skip
 
         batch = tokenizer(src_text, text_target=tgt_text)
 
         self.assertEqual(expected_src_tokens, batch["input_ids"][0])
         self.assertEqual(expected_tgt_tokens, batch["labels"][0])
 
-    # cannot use default save_and_load_tokenzier test method because tokenzier has no vocab
+    # cannot use default save_and_load_tokenizer test method because tokenizer has no vocab
     def test_save_and_load_tokenizer(self):
         # safety check on max_len default value so we are sure the test works
         tokenizers = self.get_tokenizers()
@@ -185,7 +185,7 @@ class ByT5TokenizationTest(TokenizerTesterMixin, unittest.TestCase):
                 # Isolate this from the other tests because we save additional tokens/etc
                 tmpdirname = tempfile.mkdtemp()
 
-                sample_text = " He is very happy, UNwant\u00E9d,running"
+                sample_text = " He is very happy, UNwant\u00e9d,running"
                 before_tokens = tokenizer.encode(sample_text, add_special_tokens=False)
                 tokenizer.save_pretrained(tmpdirname)
 
@@ -201,7 +201,7 @@ class ByT5TokenizationTest(TokenizerTesterMixin, unittest.TestCase):
                 # Isolate this from the other tests because we save additional tokens/etc
                 tmpdirname = tempfile.mkdtemp()
 
-                sample_text = " He is very happy, UNwant\u00E9d,running"
+                sample_text = " He is very happy, UNwant\u00e9d,running"
                 tokenizer.add_tokens(["bim", "bambam"])
                 additional_special_tokens = tokenizer.additional_special_tokens
                 additional_special_tokens.append("new_additional_special_token")
@@ -304,19 +304,15 @@ class ByT5TokenizationTest(TokenizerTesterMixin, unittest.TestCase):
 
                 self.assertTrue(tokenizer.decode([255]) == "")
 
-    # tokenizer can be instantiated without any pretrained files, so no need for pretrained tokenizer list
-    def test_pretrained_model_lists(self):
-        pass
-
-    # tokenizer does not have vocabulary
+    @unittest.skip(reason="ByT5Tokenizer does not have a vocabulary")
     def test_get_vocab(self):
         pass
 
-    # inputs cannot be pretokenized since ids depend on whole input string and not just on single characters
+    @unittest.skip(reason="inputs cannot be pretokenized as ids depend on whole input string")
     def test_pretokenized_inputs(self):
         pass
 
-    # tests all ids in vocab => vocab doesn't exist so unnecessary to test
+    @unittest.skip(reason="ByT5Tokenizer does not have a vocabulary")
     def test_conversion_reversible(self):
         pass
 

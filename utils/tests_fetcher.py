@@ -51,9 +51,12 @@ python utils/tests_fetcher.py --diff_with_last_commit
 
 import argparse
 import collections
+import glob
+import importlib.util
 import json
 import os
 import re
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
@@ -65,6 +68,10 @@ PATH_TO_REPO = Path(__file__).parent.parent.resolve()
 PATH_TO_EXAMPLES = PATH_TO_REPO / "examples"
 PATH_TO_TRANFORMERS = PATH_TO_REPO / "src/transformers"
 PATH_TO_TESTS = PATH_TO_REPO / "tests"
+
+# The value is just a heuristic to determine if we `guess` all models are impacted.
+# This variable has effect only if `filter_models=False`.
+NUM_MODELS_TO_TRIGGER_FULL_CI = 30
 
 # List here the models to always test.
 IMPORTANT_MODELS = [
@@ -81,9 +88,11 @@ IMPORTANT_MODELS = [
     "wav2vec2",
     "deberta-v2",
     "layoutlm",
+    "llama",
     "opt",
     "longformer",
     "vit",
+    "whisper",
     # Pipeline-specific model (to be sure each pipeline has one model in this list)
     "tapas",
     "vilt",
@@ -176,7 +185,7 @@ def keep_doc_examples_only(content: str) -> str:
 def get_all_tests() -> List[str]:
     """
     Walks the `tests` folder to return a list of files/subfolders. This is used to split the tests to run when using
-    paralellism. The split is:
+    parallelism. The split is:
 
     - folders under `tests`: (`tokenization`, `pipelines`, etc) except the subfolder `models` is excluded.
     - folders under `tests/models`: `bert`, `gpt2`, etc.
@@ -252,6 +261,122 @@ def diff_contains_doc_examples(repo: Repo, branching_point: str, filename: str) 
     new_content_clean = keep_doc_examples_only(new_content)
 
     return old_content_clean != new_content_clean
+
+
+def get_impacted_files_from_tiny_model_summary(diff_with_last_commit: bool = False) -> List[str]:
+    """
+    Return a list of python modeling files that are impacted by the changes of `tiny_model_summary.json` in between:
+
+    - the current head and the main branch if `diff_with_last_commit=False` (default)
+    - the current head and its parent commit otherwise.
+
+    Returns:
+        `List[str]`: The list of Python modeling files that are impacted by the changes of `tiny_model_summary.json`.
+    """
+    repo = Repo(PATH_TO_REPO)
+
+    folder = Path(repo.working_dir)
+
+    if not diff_with_last_commit:
+        print(f"main is at {repo.refs.main.commit}")
+        print(f"Current head is at {repo.head.commit}")
+
+        commits = repo.merge_base(repo.refs.main, repo.head)
+        for commit in commits:
+            print(f"Branching commit: {commit}")
+    else:
+        print(f"main is at {repo.head.commit}")
+        commits = repo.head.commit.parents
+        for commit in commits:
+            print(f"Parent commit: {commit}")
+
+    if not os.path.isfile(folder / "tests/utils/tiny_model_summary.json"):
+        return []
+
+    files = set()
+    for commit in commits:
+        with checkout_commit(repo, commit):
+            with open(folder / "tests/utils/tiny_model_summary.json", "r", encoding="utf-8") as f:
+                old_content = f.read()
+
+        with open(folder / "tests/utils/tiny_model_summary.json", "r", encoding="utf-8") as f:
+            new_content = f.read()
+
+        # get the content as json object
+        old_content = json.loads(old_content)
+        new_content = json.loads(new_content)
+
+        old_keys = set(old_content.keys())
+        new_keys = set(new_content.keys())
+
+        # get the difference
+        keys_with_diff = old_keys.symmetric_difference(new_keys)
+        common_keys = old_keys.intersection(new_keys)
+        # if both have the same key, check its content
+        for key in common_keys:
+            if old_content[key] != new_content[key]:
+                keys_with_diff.add(key)
+
+        # get the model classes
+        impacted_model_classes = []
+        for key in keys_with_diff:
+            if key in new_keys:
+                impacted_model_classes.extend(new_content[key]["model_classes"])
+
+        # get the module where the model classes are defined. We want to use the main `__init__` file, but it requires
+        # all the framework being installed, which is not ideal for a simple script like test fetcher.
+        # So we create a temporary and modified main `__init__` and access its `_import_structure`.
+        with open(folder / "src/transformers/__init__.py") as fp:
+            lines = fp.readlines()
+            new_lines = []
+            # Get all the code related to `_import_structure`
+            for line in lines:
+                if line == "_import_structure = {\n":
+                    new_lines.append(line)
+                elif line == "# Direct imports for type-checking\n":
+                    break
+                elif len(new_lines) > 0:
+                    # bypass the framework check so we can get all the information even if frameworks are not available
+                    line = re.sub(r"is_.+_available\(\)", "True", line)
+                    line = line.replace("OptionalDependencyNotAvailable", "Exception")
+                    line = line.replace("Exception()", "Exception")
+                    new_lines.append(line)
+
+        # create and load the temporary module
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            with open(os.path.join(tmpdirname, "temp_init.py"), "w") as fp:
+                fp.write("".join(new_lines))
+
+            spec = importlib.util.spec_from_file_location("temp_init", os.path.join(tmpdirname, "temp_init.py"))
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            # Finally, get `_import_structure` that we need
+            import_structure = module._import_structure
+
+            # map model classes to their defined module
+            reversed_structure = {}
+            for key, values in import_structure.items():
+                for value in values:
+                    reversed_structure[value] = key
+
+            # Get the corresponding modeling file path
+            for model_class in impacted_model_classes:
+                module = reversed_structure[model_class]
+                framework = ""
+                if model_class.startswith("TF"):
+                    framework = "tf"
+                elif model_class.startswith("Flax"):
+                    framework = "flax"
+                fn = (
+                    f"modeling_{module.split('.')[-1]}.py"
+                    if framework == ""
+                    else f"modeling_{framework}_{module.split('.')[-1]}.py"
+                )
+                files.add(
+                    f"src.transformers.{module}.{fn}".replace(".", os.path.sep).replace(f"{os.path.sep}py", ".py")
+                )
+
+    return sorted(files)
 
 
 def get_diff(repo: Repo, base_commit: str, commits: List[str]) -> List[str]:
@@ -378,7 +503,12 @@ def get_all_doctest_files() -> List[str]:
     """
     py_files = [str(x.relative_to(PATH_TO_REPO)) for x in PATH_TO_REPO.glob("**/*.py")]
     md_files = [str(x.relative_to(PATH_TO_REPO)) for x in PATH_TO_REPO.glob("**/*.md")]
+
     test_files_to_run = py_files + md_files
+    # change to use "/" as path separator
+    test_files_to_run = ["/".join(Path(x).parts) for x in test_files_to_run]
+    # don't run doctest for files in `src/transformers/models/deprecated`
+    test_files_to_run = [x for x in test_files_to_run if "models/deprecated" not in x]
 
     # only include files in `src` or `docs/source/en/`
     test_files_to_run = [x for x in test_files_to_run if x.startswith(("src/", "docs/source/en/"))]
@@ -387,7 +517,7 @@ def get_all_doctest_files() -> List[str]:
 
     # These are files not doctested yet.
     with open("utils/not_doctested.txt") as fp:
-        not_doctested = set(fp.read().strip().split("\n"))
+        not_doctested = {x.split(" ")[0] for x in fp.read().strip().split("\n")}
 
     # So far we don't have 100% coverage for doctest. This line will be removed once we achieve 100%.
     test_files_to_run = [x for x in test_files_to_run if x not in not_doctested]
@@ -415,7 +545,9 @@ def get_new_doctest_files(repo, base_commit, branching_commit) -> List[str]:
         with open(folder / "utils/not_doctested.txt", "r", encoding="utf-8") as f:
             new_content = f.read()
         # Compute the removed lines and return them
-        removed_content = set(old_content.split("\n")) - set(new_content.split("\n"))
+        removed_content = {x.split(" ")[0] for x in old_content.split("\n")} - {
+            x.split(" ")[0] for x in new_content.split("\n")
+        }
         return sorted(removed_content)
     return []
 
@@ -489,7 +621,7 @@ _re_single_line_direct_imports = re.compile(r"(?:^|\n)\s*from\s+transformers(\S*
 _re_multi_line_direct_imports = re.compile(r"(?:^|\n)\s*from\s+transformers(\S*)\s+import\s+\(([^\)]+)\)")
 
 
-def extract_imports(module_fname: str, cache: Dict[str, List[str]] = None) -> List[str]:
+def extract_imports(module_fname: str, cache: Optional[Dict[str, List[str]]] = None) -> List[str]:
     """
     Get the imports a given module makes.
 
@@ -513,9 +645,7 @@ def extract_imports(module_fname: str, cache: Dict[str, List[str]] = None) -> Li
 
     # Filter out all docstrings to not get imports in code examples. As before we need to deactivate formatting to
     # keep this as escaped quotes and avoid this function failing on this file.
-    # fmt: off
-    splits = content.split('\"\"\"')
-    # fmt: on
+    splits = content.split('\"\"\"')  # fmt: skip
     content = "".join(splits[::2])
 
     module_parts = str(module_fname).split(os.path.sep)
@@ -573,7 +703,7 @@ def extract_imports(module_fname: str, cache: Dict[str, List[str]] = None) -> Li
     return result
 
 
-def get_module_dependencies(module_fname: str, cache: Dict[str, List[str]] = None) -> List[str]:
+def get_module_dependencies(module_fname: str, cache: Optional[Dict[str, List[str]]] = None) -> List[str]:
     """
     Refines the result of `extract_imports` to remove subfolders and get a proper list of module filenames: if a file
     as an import `from utils import Foo, Bar`, with `utils` being a subfolder containing many files, this will traverse
@@ -600,16 +730,39 @@ def get_module_dependencies(module_fname: str, cache: Dict[str, List[str]] = Non
     while len(imported_modules) > 0:
         new_modules = []
         for module, imports in imported_modules:
+            if "models" in module.split("/") and module.split("/")[-1].startswith("convert_"):
+                continue
             # If we end up in an __init__ we are often not actually importing from this init (except in the case where
             # the object is fully defined in the __init__)
             if module.endswith("__init__.py"):
                 # So we get the imports from that init then try to find where our objects come from.
-                new_imported_modules = extract_imports(module, cache=cache)
-                for new_module, new_imports in new_imported_modules:
+                new_imported_modules = dict(extract_imports(module, cache=cache))
+
+                # Add imports via `define_import_structure` after the #35167 as we remove explicit import in `__init__.py`
+                from transformers.utils.import_utils import define_import_structure
+
+                new_imported_modules_from_import_structure = define_import_structure(PATH_TO_REPO / module)
+
+                for mapping in new_imported_modules_from_import_structure.values():
+                    for _module, _imports in mapping.items():
+                        # Import Structure returns _module keys as import paths rather than local paths
+                        # We replace with os.path.sep so that it's Windows-compatible
+                        _module = _module.replace(".", os.path.sep)
+                        _module = module.replace("__init__.py", f"{_module}.py")
+                        if _module not in new_imported_modules:
+                            new_imported_modules[_module] = list(_imports)
+                        else:
+                            original_imports = new_imported_modules[_module]
+                            for potential_new_item in list(_imports):
+                                if potential_new_item not in original_imports:
+                                    new_imported_modules[_module].append(potential_new_item)
+
+                for new_module, new_imports in new_imported_modules.items():
                     if any(i in new_imports for i in imports):
                         if new_module not in dependencies:
                             new_modules.append((new_module, [i for i in new_imports if i in imports]))
                         imports = [i for i in imports if i not in new_imports]
+
                 if len(imports) > 0:
                     # If there are any objects lefts, they may be a submodule
                     path_to_module = PATH_TO_REPO / module.replace("__init__.py", "")
@@ -629,6 +782,7 @@ def get_module_dependencies(module_fname: str, cache: Dict[str, List[str]] = Non
                 dependencies.append(module)
 
         imported_modules = new_modules
+
     return dependencies
 
 
@@ -637,7 +791,9 @@ def create_reverse_dependency_tree() -> List[Tuple[str, str]]:
     Create a list of all edges (a, b) which mean that modifying a impacts b with a going over all module and test files.
     """
     cache = {}
-    all_modules = list(PATH_TO_TRANFORMERS.glob("**/*.py")) + list(PATH_TO_TESTS.glob("**/*.py"))
+    all_modules = list(PATH_TO_TRANFORMERS.glob("**/*.py"))
+    all_modules = [x for x in all_modules if not ("models" in x.parts and x.parts[-1].startswith("convert_"))]
+    all_modules += list(PATH_TO_TESTS.glob("**/*.py"))
     all_modules = [str(mod.relative_to(PATH_TO_REPO)) for mod in all_modules]
     edges = [(dep, mod) for mod in all_modules for dep in get_module_dependencies(mod, cache=cache)]
 
@@ -707,7 +863,7 @@ def print_tree_deps_of(module, all_edges=None):
 
 def init_test_examples_dependencies() -> Tuple[Dict[str, List[str]], List[str]]:
     """
-    The test examples do not import from the examples (which are just scripts, not modules) so we need som extra
+    The test examples do not import from the examples (which are just scripts, not modules) so we need some extra
     care initializing the dependency map, which is the goal of this function. It initializes the dependency map for
     example files by linking each example to the example test file for the example framework.
 
@@ -750,11 +906,14 @@ def create_reverse_dependency_map() -> Dict[str, List[str]]:
         depending on it recursively. This way the tests impacted by a change in file A are the test files in the list
         corresponding to key A in this result.
     """
+
     cache = {}
     # Start from the example deps init.
     example_deps, examples = init_test_examples_dependencies()
     # Add all modules and all tests to all examples
-    all_modules = list(PATH_TO_TRANFORMERS.glob("**/*.py")) + list(PATH_TO_TESTS.glob("**/*.py")) + examples
+    all_modules = list(PATH_TO_TRANFORMERS.glob("**/*.py"))
+    all_modules = [x for x in all_modules if not ("models" in x.parts and x.parts[-1].startswith("convert_"))]
+    all_modules += list(PATH_TO_TESTS.glob("**/*.py")) + examples
     all_modules = [str(mod.relative_to(PATH_TO_REPO)) for mod in all_modules]
     # Compute the direct dependencies of all modules.
     direct_deps = {m: get_module_dependencies(m, cache=cache) for m in all_modules}
@@ -794,7 +953,7 @@ def create_reverse_dependency_map() -> Dict[str, List[str]]:
 
 
 def create_module_to_test_map(
-    reverse_map: Dict[str, List[str]] = None, filter_models: bool = False
+    reverse_map: Optional[Dict[str, List[str]]] = None, filter_models: bool = False
 ) -> Dict[str, List[str]]:
     """
     Extract the tests from the reverse_dependency_map and potentially filters the model tests.
@@ -834,26 +993,27 @@ def create_module_to_test_map(
         model_tests = {Path(t).parts[2] for t in tests if t.startswith("tests/models/")}
         return len(model_tests) > num_model_tests // 2
 
-    def filter_tests(tests):
-        return [t for t in tests if not t.startswith("tests/models/") or Path(t).parts[2] in IMPORTANT_MODELS]
+    # for each module (if specified in the argument `module`) of the form `models/my_model` (i.e. starting with it),
+    # we always keep the tests (those are already in the argument `tests`) which are in `tests/models/my_model`.
+    # This is to avoid them being excluded when a module has many impacted tests: the directly related test files should
+    # always be included!
+    def filter_tests(tests, module=""):
+        filtered_tests = []
+        for t in tests:
+            if (
+                not t.startswith("tests/models/")
+                or Path(t).parts[2] in IMPORTANT_MODELS
+                # at this point, `t` is of the form `tests/models/my_model`, and we check if `models/my_model`
+                # (i.e. `parts[1:3]`) is in `module`.
+                or "/".join(Path(t).parts[1:3]) in module
+            ):
+                filtered_tests += [t]
+        return filtered_tests
 
-    return {module: (filter_tests(tests) if has_many_models(tests) else tests) for module, tests in test_map.items()}
-
-
-def check_imports_all_exist():
-    """
-    Isn't used per se by the test fetcher but might be used later as a quality check. Putting this here for now so the
-    code is not lost. This checks all imports in a given file do exist.
-    """
-    cache = {}
-    all_modules = list(PATH_TO_TRANFORMERS.glob("**/*.py")) + list(PATH_TO_TESTS.glob("**/*.py"))
-    all_modules = [str(mod.relative_to(PATH_TO_REPO)) for mod in all_modules]
-    direct_deps = {m: get_module_dependencies(m, cache=cache) for m in all_modules}
-
-    for module, deps in direct_deps.items():
-        for dep in deps:
-            if not (PATH_TO_REPO / dep).is_file():
-                print(f"{module} has dependency on {dep} which does not exist.")
+    return {
+        module: (filter_tests(tests, module=module) if has_many_models(tests) else tests)
+        for module, tests in test_map.items()
+    }
 
 
 def _print_list(l) -> str:
@@ -863,51 +1023,8 @@ def _print_list(l) -> str:
     return "\n".join([f"- {f}" for f in l])
 
 
-def create_json_map(test_files_to_run: List[str], json_output_file: str):
-    """
-    Creates a map from a list of tests to run to easily split them by category, when running parallelism of slow tests.
-
-    Args:
-        test_files_to_run (`List[str]`): The list of tests to run.
-        json_output_file (`str`): The path where to store the built json map.
-    """
-    if json_output_file is None:
-        return
-
-    test_map = {}
-    for test_file in test_files_to_run:
-        # `test_file` is a path to a test folder/file, starting with `tests/`. For example,
-        #   - `tests/models/bert/test_modeling_bert.py` or `tests/models/bert`
-        #   - `tests/trainer/test_trainer.py` or `tests/trainer`
-        #   - `tests/test_modeling_common.py`
-        names = test_file.split(os.path.sep)
-        if names[1] == "models":
-            # take the part like `models/bert` for modeling tests
-            key = os.path.sep.join(names[1:3])
-        elif len(names) > 2 or not test_file.endswith(".py"):
-            # test folders under `tests` or python files under them
-            # take the part like tokenization, `pipeline`, etc. for other test categories
-            key = os.path.sep.join(names[1:2])
-        else:
-            # common test files directly under `tests/`
-            key = "common"
-
-        if key not in test_map:
-            test_map[key] = []
-        test_map[key].append(test_file)
-
-    # sort the keys & values
-    keys = sorted(test_map.keys())
-    test_map = {k: " ".join(sorted(test_map[k])) for k in keys}
-    with open(json_output_file, "w", encoding="UTF-8") as fp:
-        json.dump(test_map, fp, ensure_ascii=False)
-
-
 def infer_tests_to_run(
-    output_file: str,
-    diff_with_last_commit: bool = False,
-    filter_models: bool = True,
-    json_output_file: Optional[str] = None,
+    output_file: str, diff_with_last_commit: bool = False, filter_models: bool = False, test_all: bool = False
 ):
     """
     The main function called by the test fetcher. Determines the tests to run from the diff.
@@ -927,14 +1044,14 @@ def infer_tests_to_run(
         filter_models (`bool`, *optional*, defaults to `True`):
             Whether or not to filter the tests to core models only, when a file modified results in a lot of model
             tests.
-        json_output_file (`str`, *optional*):
-            The path where to store the json file mapping categories of tests to tests to run (used for parallelism or
-            the slow tests).
     """
-    modified_files = get_modified_python_files(diff_with_last_commit=diff_with_last_commit)
+    if not test_all:
+        modified_files = get_modified_python_files(diff_with_last_commit=diff_with_last_commit)
+    else:
+        modified_files = [str(k) for k in PATH_TO_TESTS.glob("*/*") if str(k).endswith(".py") and "test_" in str(k)]
+        print("\n### test_all is TRUE, FETCHING ALL FILES###\n")
     print(f"\n### MODIFIED FILES ###\n{_print_list(modified_files)}")
 
-    # Create the map that will give us all impacted modules.
     reverse_map = create_reverse_dependency_map()
     impacted_files = modified_files.copy()
     for f in modified_files:
@@ -945,18 +1062,29 @@ def infer_tests_to_run(
     impacted_files = sorted(set(impacted_files))
     print(f"\n### IMPACTED FILES ###\n{_print_list(impacted_files)}")
 
+    model_impacted = {"/".join(x.split("/")[:3]) for x in impacted_files if x.startswith("tests/models/")}
     # Grab the corresponding test files:
-    if "setup.py" in modified_files:
-        test_files_to_run = ["tests", "examples"]
-        repo_utils_launch = True
+    if (
+        any(x in modified_files for x in ["setup.py", ".circleci/create_circleci_config.py"])
+        or not filter_models
+        and len(model_impacted) >= NUM_MODELS_TO_TRIGGER_FULL_CI
+        or commit_flags["test_all"]
+    ):
+        test_files_to_run = glob.glob("tests/**/test_**.py", recursive=True) + glob.glob(
+            "examples/**/*.py", recursive=True
+        )
+        if len(model_impacted) >= NUM_MODELS_TO_TRIGGER_FULL_CI and filter_models:
+            print(
+                f"More than {NUM_MODELS_TO_TRIGGER_FULL_CI - 1} models are impacted and `filter_models=False`. CI is configured to test everything."
+            )
     else:
         # All modified tests need to be run.
-        test_files_to_run = [
-            f for f in modified_files if f.startswith("tests") and f.split(os.path.sep)[-1].startswith("test")
-        ]
+        test_files_to_run = [f for f in modified_files if f.startswith("tests") and "/test_" in f]
+        impacted_files = get_impacted_files_from_tiny_model_summary(diff_with_last_commit=diff_with_last_commit)
+
         # Then we grab the corresponding test files.
         test_map = create_module_to_test_map(reverse_map=reverse_map, filter_models=filter_models)
-        for f in modified_files:
+        for f in modified_files + impacted_files:
             if f in test_map:
                 test_files_to_run.extend(test_map[f])
         test_files_to_run = sorted(set(test_files_to_run))
@@ -967,37 +1095,9 @@ def infer_tests_to_run(
         # Make sure we did not end up with a test file that was removed
         test_files_to_run = [f for f in test_files_to_run if (PATH_TO_REPO / f).exists()]
 
-        repo_utils_launch = any(f.split(os.path.sep)[0] == "utils" for f in modified_files)
-
-    if repo_utils_launch:
-        repo_util_file = Path(output_file).parent / "test_repo_utils.txt"
-        with open(repo_util_file, "w", encoding="utf-8") as f:
-            f.write("tests/repo_utils")
-
-    examples_tests_to_run = [f for f in test_files_to_run if f.startswith("examples")]
-    test_files_to_run = [f for f in test_files_to_run if not f.startswith("examples")]
     print(f"\n### TEST TO RUN ###\n{_print_list(test_files_to_run)}")
-    if len(test_files_to_run) > 0:
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(" ".join(test_files_to_run))
 
-        # Create a map that maps test categories to test files, i.e. `models/bert` -> [...test_modeling_bert.py, ...]
-
-        # Get all test directories (and some common test files) under `tests` and `tests/models` if `test_files_to_run`
-        # contains `tests` (i.e. when `setup.py` is changed).
-        if "tests" in test_files_to_run:
-            test_files_to_run = get_all_tests()
-
-        create_json_map(test_files_to_run, json_output_file)
-
-    print(f"\n### EXAMPLES TEST TO RUN ###\n{_print_list(examples_tests_to_run)}")
-    if len(examples_tests_to_run) > 0:
-        # We use `all` in the case `commit_flags["test_all"]` as well as in `create_circleci_config.py` for processing
-        if examples_tests_to_run == ["examples"]:
-            examples_tests_to_run = ["all"]
-        example_file = Path(output_file).parent / "examples_test_list.txt"
-        with open(example_file, "w", encoding="utf-8") as f:
-            f.write(" ".join(examples_tests_to_run))
+    create_test_list_from_filter(test_files_to_run, out_path="test_preparation/")
 
     doctest_list = get_doctest_files()
 
@@ -1061,6 +1161,37 @@ def parse_commit_message(commit_message: str) -> Dict[str, bool]:
         return {"skip": False, "no_filter": False, "test_all": False}
 
 
+JOB_TO_TEST_FILE = {
+    "tests_torch": r"tests/models/.*/test_modeling_(?!(?:flax_|tf_)).*",
+    "tests_generate": r"tests/models/.*/test_modeling_(?!(?:flax_|tf_)).*",
+    "tests_tokenization": r"tests/models/.*/test_tokenization.*",
+    "tests_processors": r"tests/models/.*/test_(?!(?:modeling_|tokenization_)).*",  # takes feature extractors, image processors, processors
+    "examples_torch": r"examples/pytorch/.*test_.*",
+    "tests_exotic_models": r"tests/models/.*(?=layoutlmv|nat|deta|udop|nougat).*",
+    "tests_custom_tokenizers": r"tests/models/.*/test_tokenization_(?=bert_japanese|openai|clip).*",
+    # "repo_utils": r"tests/[^models].*test.*", TODO later on we might want to do
+    "pipelines_torch": r"tests/models/.*/test_modeling_(?!(?:flax_|tf_)).*",
+    "tests_hub": r"tests/.*",
+    "tests_onnx": r"tests/models/.*/test_modeling_(?:tf_|(?!flax)).*",
+    "tests_non_model": r"tests/[^/]*?/test_.*\.py",
+}
+
+
+def create_test_list_from_filter(full_test_list, out_path):
+    os.makedirs(out_path, exist_ok=True)
+    all_test_files = "\n".join(full_test_list)
+    for job_name, _filter in JOB_TO_TEST_FILE.items():
+        file_name = os.path.join(out_path, f"{job_name}_test_list.txt")
+        if job_name == "tests_hub":
+            files_to_test = ["tests"]
+        else:
+            files_to_test = list(re.findall(_filter, all_test_files))
+        print(job_name, file_name)
+        if len(files_to_test) > 0:  # No tests -> no file with test list
+            with open(file_name, "w") as f:
+                f.write("\n".join(files_to_test))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1089,9 +1220,9 @@ if __name__ == "__main__":
         default=None,
     )
     parser.add_argument(
-        "--commit_message",
-        type=str,
-        help="The commit message (which could contain a command to force all tests or skip the CI).",
+        "--fetch_all",
+        action="store_true",
+        help="Will fetch all tests.",
         default=None,
     )
     args = parser.parse_args()
@@ -1108,33 +1239,22 @@ if __name__ == "__main__":
             quit()
         if commit_flags["no_filter"]:
             print("Running all tests fetched without filtering.")
+
+        if args.fetch_all:
+            commit_flags["test_all"] = True
         if commit_flags["test_all"]:
             print("Force-launching all tests")
 
+        is_main_branch = not repo.head.is_detached and repo.head.ref == repo.refs.main
         diff_with_last_commit = args.diff_with_last_commit
-        if not diff_with_last_commit and not repo.head.is_detached and repo.head.ref == repo.refs.main:
+        if not diff_with_last_commit and is_main_branch:
             print("main branch detected, fetching tests against last commit.")
             diff_with_last_commit = True
 
-        if not commit_flags["test_all"]:
-            try:
-                infer_tests_to_run(
-                    args.output_file,
-                    diff_with_last_commit=diff_with_last_commit,
-                    json_output_file=args.json_output_file,
-                    filter_models=not commit_flags["no_filter"],
-                )
-                filter_tests(args.output_file, ["repo_utils"])
-            except Exception as e:
-                print(f"\nError when trying to grab the relevant tests: {e}\n\nRunning all tests.")
-                commit_flags["test_all"] = True
-
-        if commit_flags["test_all"]:
-            with open(args.output_file, "w", encoding="utf-8") as f:
-                f.write("tests")
-            example_file = Path(args.output_file).parent / "examples_test_list.txt"
-            with open(example_file, "w", encoding="utf-8") as f:
-                f.write("all")
-
-            test_files_to_run = get_all_tests()
-            create_json_map(test_files_to_run, args.json_output_file)
+        infer_tests_to_run(
+            args.output_file,
+            diff_with_last_commit=diff_with_last_commit,
+            filter_models=False,
+            test_all=commit_flags["test_all"],
+        )
+        filter_tests(args.output_file, ["repo_utils"])

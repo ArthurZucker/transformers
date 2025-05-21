@@ -263,9 +263,9 @@ def main():
     if args.path_to_checkpoint.endswith(".zip"):
         with zipfile.ZipFile(args.path_to_checkpoint, "r") as checkpoint:
             with checkpoint.open("release/mp_rank_00/model_optim_rng.pt") as pytorch_dict:
-                input_state_dict = torch.load(pytorch_dict, map_location="cpu")
+                input_state_dict = torch.load(pytorch_dict, map_location="cpu", weights_only=True)
     else:
-        input_state_dict = torch.load(args.path_to_checkpoint, map_location="cpu")
+        input_state_dict = torch.load(args.path_to_checkpoint, map_location="cpu", weights_only=True)
 
     ds_args = input_state_dict.get("args", None)
 
@@ -324,13 +324,13 @@ def main():
     if ds_args is not None:
         tokenizer_type = ds_args.tokenizer_type
         if tokenizer_type == "GPT2BPETokenizer":
-            tokenizer_model_name = "gpt2"
+            tokenizer_model_name = "openai-community/gpt2"
         elif tokenizer_type == "PretrainedFromHF":
             tokenizer_model_name = ds_args.tokenizer_name_or_path
         else:
             raise ValueError(f"Unrecognized tokenizer_type {tokenizer_type}")
     else:
-        tokenizer_model_name = "gpt2"
+        tokenizer_model_name = "openai-community/gpt2"
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name)
     tokenizer_class = type(tokenizer).__name__

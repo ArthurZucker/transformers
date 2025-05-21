@@ -16,6 +16,11 @@ rendered properly in your Markdown viewer.
 
 # LED
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
+</div>
+
 ## Overview
 
 The LED model was proposed in [Longformer: The Long-Document Transformer](https://arxiv.org/abs/2004.05150) by Iz
@@ -35,7 +40,7 @@ WikiHop and TriviaQA. We finally introduce the Longformer-Encoder-Decoder (LED),
 long document generative sequence-to-sequence tasks, and demonstrate its effectiveness on the arXiv summarization
 dataset.*
 
-Tips:
+## Usage tips
 
 - [`LEDForConditionalGeneration`] is an extension of
   [`BartForConditionalGeneration`] exchanging the traditional *self-attention* layer with
@@ -52,15 +57,15 @@ Tips:
   errors. This can be done by executing `model.gradient_checkpointing_enable()`. 
  Moreover, the `use_cache=False`
   flag can be used to disable the caching mechanism to save memory.
-- A notebook showing how to evaluate LED, can be accessed [here](https://colab.research.google.com/drive/12INTTR6n64TzS4RrXZxMSXfrOd9Xzamo?usp=sharing).
-- A notebook showing how to fine-tune LED, can be accessed [here](https://colab.research.google.com/drive/12LjJazBl7Gam0XBPy_y0CTOJZeZ34c2v?usp=sharing).
 - LED is a model with absolute position embeddings so it's usually advised to pad the inputs on the right rather than
   the left.
 
 This model was contributed by [patrickvonplaten](https://huggingface.co/patrickvonplaten).
 
-## Documentation resources
+## Resources
 
+- [A notebook showing how to evaluate LED](https://colab.research.google.com/drive/12INTTR6n64TzS4RrXZxMSXfrOd9Xzamo?usp=sharing).
+- [A notebook showing how to fine-tune LED](https://colab.research.google.com/drive/12LjJazBl7Gam0XBPy_y0CTOJZeZ34c2v?usp=sharing).
 - [Text classification task guide](../tasks/sequence_classification)
 - [Question answering task guide](../tasks/question_answering)
 - [Translation task guide](../tasks/translation)
@@ -100,6 +105,9 @@ This model was contributed by [patrickvonplaten](https://huggingface.co/patrickv
 
 [[autodoc]] models.led.modeling_tf_led.TFLEDSeq2SeqLMOutput
 
+<frameworkcontent>
+<pt>
+
 ## LEDModel
 
 [[autodoc]] LEDModel
@@ -120,6 +128,9 @@ This model was contributed by [patrickvonplaten](https://huggingface.co/patrickv
 [[autodoc]] LEDForQuestionAnswering
     - forward
 
+</pt>
+<tf>
+
 ## TFLEDModel
 
 [[autodoc]] TFLEDModel
@@ -129,3 +140,9 @@ This model was contributed by [patrickvonplaten](https://huggingface.co/patrickv
 
 [[autodoc]] TFLEDForConditionalGeneration
     - call
+
+</tf>
+</frameworkcontent>
+
+
+

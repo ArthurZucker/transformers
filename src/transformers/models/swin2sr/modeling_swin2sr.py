@@ -12,8 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch Swin2SR Transformer model."""
-
+"""PyTorch Swin2SR Transformer model."""
 
 import collections.abc
 import math
@@ -28,31 +27,11 @@ from ...activations import ACT2FN
 from ...modeling_outputs import BaseModelOutput, ImageSuperResolutionOutput
 from ...modeling_utils import PreTrainedModel
 from ...pytorch_utils import find_pruneable_heads_and_indices, meshgrid, prune_linear_layer
-from ...utils import (
-    ModelOutput,
-    add_code_sample_docstrings,
-    add_start_docstrings,
-    add_start_docstrings_to_model_forward,
-    logging,
-    replace_return_docstrings,
-)
+from ...utils import ModelOutput, auto_docstring, logging
 from .configuration_swin2sr import Swin2SRConfig
 
 
 logger = logging.get_logger(__name__)
-
-# General docstring
-_CONFIG_FOR_DOC = "Swin2SRConfig"
-
-# Base docstring
-_CHECKPOINT_FOR_DOC = "caidas/swin2SR-classical-sr-x2-64"
-_EXPECTED_OUTPUT_SHAPE = [1, 180, 488, 648]
-
-
-SWIN2SR_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "caidas/swin2SR-classical-sr-x2-64",
-    # See all Swin2SR models at https://huggingface.co/models?filter=swin2sr
-]
 
 
 @dataclass
@@ -76,7 +55,7 @@ class Swin2SREncoderOutput(ModelOutput):
             heads.
     """
 
-    last_hidden_state: torch.FloatTensor = None
+    last_hidden_state: Optional[torch.FloatTensor] = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
 
@@ -290,8 +269,8 @@ class Swin2SRSelfAttention(nn.Module):
         )
 
         # get relative_coords_table
-        relative_coords_h = torch.arange(-(self.window_size[0] - 1), self.window_size[0], dtype=torch.float32)
-        relative_coords_w = torch.arange(-(self.window_size[1] - 1), self.window_size[1], dtype=torch.float32)
+        relative_coords_h = torch.arange(-(self.window_size[0] - 1), self.window_size[0], dtype=torch.int64).float()
+        relative_coords_w = torch.arange(-(self.window_size[1] - 1), self.window_size[1], dtype=torch.int64).float()
         relative_coords_table = (
             torch.stack(meshgrid([relative_coords_h, relative_coords_w], indexing="ij"))
             .permute(1, 2, 0)
@@ -301,13 +280,15 @@ class Swin2SRSelfAttention(nn.Module):
         if pretrained_window_size[0] > 0:
             relative_coords_table[:, :, :, 0] /= pretrained_window_size[0] - 1
             relative_coords_table[:, :, :, 1] /= pretrained_window_size[1] - 1
-        else:
+        elif window_size > 1:
             relative_coords_table[:, :, :, 0] /= self.window_size[0] - 1
             relative_coords_table[:, :, :, 1] /= self.window_size[1] - 1
         relative_coords_table *= 8  # normalize to -8, 8
         relative_coords_table = (
             torch.sign(relative_coords_table) * torch.log2(torch.abs(relative_coords_table) + 1.0) / math.log2(8)
         )
+        # set to same dtype as mlp weight
+        relative_coords_table = relative_coords_table.to(next(self.continuous_position_bias_mlp.parameters()).dtype)
         self.register_buffer("relative_coords_table", relative_coords_table, persistent=False)
 
         # get pair-wise relative position index for each token inside the window
@@ -487,13 +468,16 @@ class Swin2SROutput(nn.Module):
 
 # Copied from transformers.models.swinv2.modeling_swinv2.Swinv2Layer with Swinv2->Swin2SR
 class Swin2SRLayer(nn.Module):
-    def __init__(self, config, dim, input_resolution, num_heads, shift_size=0, pretrained_window_size=0):
+    def __init__(
+        self, config, dim, input_resolution, num_heads, drop_path_rate=0.0, shift_size=0, pretrained_window_size=0
+    ):
         super().__init__()
-        self.chunk_size_feed_forward = config.chunk_size_feed_forward
-        self.shift_size = shift_size
-        self.window_size = config.window_size
         self.input_resolution = input_resolution
-        self.set_shift_and_window_size(input_resolution)
+        window_size, shift_size = self._compute_window_shift(
+            (config.window_size, config.window_size), (shift_size, shift_size)
+        )
+        self.window_size = window_size[0]
+        self.shift_size = shift_size[0]
         self.attention = Swin2SRAttention(
             config=config,
             dim=dim,
@@ -504,34 +488,15 @@ class Swin2SRLayer(nn.Module):
             else (pretrained_window_size, pretrained_window_size),
         )
         self.layernorm_before = nn.LayerNorm(dim, eps=config.layer_norm_eps)
-        self.drop_path = Swin2SRDropPath(config.drop_path_rate) if config.drop_path_rate > 0.0 else nn.Identity()
+        self.drop_path = Swin2SRDropPath(drop_path_rate) if drop_path_rate > 0.0 else nn.Identity()
         self.intermediate = Swin2SRIntermediate(config, dim)
         self.output = Swin2SROutput(config, dim)
         self.layernorm_after = nn.LayerNorm(dim, eps=config.layer_norm_eps)
 
-    def set_shift_and_window_size(self, input_resolution):
-        target_window_size = (
-            self.window_size
-            if isinstance(self.window_size, collections.abc.Iterable)
-            else (self.window_size, self.window_size)
-        )
-        target_shift_size = (
-            self.shift_size
-            if isinstance(self.shift_size, collections.abc.Iterable)
-            else (self.shift_size, self.shift_size)
-        )
-        window_dim = input_resolution[0].item() if torch.is_tensor(input_resolution[0]) else input_resolution[0]
-        self.window_size = window_dim if window_dim <= target_window_size[0] else target_window_size[0]
-        self.shift_size = (
-            0
-            if input_resolution
-            <= (
-                self.window_size
-                if isinstance(self.window_size, collections.abc.Iterable)
-                else (self.window_size, self.window_size)
-            )
-            else target_shift_size[0]
-        )
+    def _compute_window_shift(self, target_window_size, target_shift_size) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+        window_size = [r if r <= w else w for r, w in zip(self.input_resolution, target_window_size)]
+        shift_size = [0 if r <= w else s for r, w, s in zip(self.input_resolution, window_size, target_shift_size)]
+        return window_size, shift_size
 
     def get_attn_mask(self, height, width, dtype):
         if self.shift_size > 0:
@@ -574,12 +539,7 @@ class Swin2SRLayer(nn.Module):
         input_dimensions: Tuple[int, int],
         head_mask: Optional[torch.FloatTensor] = None,
         output_attentions: Optional[bool] = False,
-        always_partition: Optional[bool] = False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if not always_partition:
-            self.set_shift_and_window_size(input_dimensions)
-        else:
-            pass
         height, width = input_dimensions
         batch_size, _, channels = hidden_states.size()
         shortcut = hidden_states
@@ -708,7 +668,7 @@ class Swin2SREncoder(nn.Module):
         super().__init__()
         self.num_stages = len(config.depths)
         self.config = config
-        dpr = [x.item() for x in torch.linspace(0, config.drop_path_rate, sum(config.depths))]
+        dpr = [x.item() for x in torch.linspace(0, config.drop_path_rate, sum(config.depths), device="cpu")]
         self.stages = nn.ModuleList(
             [
                 Swin2SRStage(
@@ -746,7 +706,7 @@ class Swin2SREncoder(nn.Module):
             layer_head_mask = head_mask[i] if head_mask is not None else None
 
             if self.gradient_checkpointing and self.training:
-                layer_outputs = self.gradient_checkpointing_func(
+                layer_outputs = self._gradient_checkpointing_func(
                     stage_module.__call__, hidden_states, input_dimensions, layer_head_mask, output_attentions
                 )
             else:
@@ -774,12 +734,8 @@ class Swin2SREncoder(nn.Module):
         )
 
 
+@auto_docstring
 class Swin2SRPreTrainedModel(PreTrainedModel):
-    """
-    An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
-    models.
-    """
-
     config_class = Swin2SRConfig
     base_model_prefix = "swin2sr"
     main_input_name = "pixel_values"
@@ -795,59 +751,19 @@ class Swin2SRPreTrainedModel(PreTrainedModel):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
-    def _set_gradient_checkpointing(self, module, gradient_checkpointing_func=None):
-        if isinstance(module, Swin2SREncoder):
-            module.gradient_checkpointing_func = gradient_checkpointing_func
-            module.gradient_checkpointing = gradient_checkpointing_func is not None
 
-
-SWIN2SR_START_DOCSTRING = r"""
-    This model is a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) sub-class. Use
-    it as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage and
-    behavior.
-
-    Parameters:
-        config ([`Swin2SRConfig`]): Model configuration class with all the parameters of the model.
-            Initializing with a config file does not load the weights associated with the model, only the
-            configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
-"""
-
-SWIN2SR_INPUTS_DOCSTRING = r"""
-    Args:
-        pixel_values (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)`):
-            Pixel values. Pixel values can be obtained using [`AutoImageProcessor`]. See
-            [`Swin2SRImageProcessor.__call__`] for details.
-        head_mask (`torch.FloatTensor` of shape `(num_heads,)` or `(num_layers, num_heads)`, *optional*):
-            Mask to nullify selected heads of the self-attention modules. Mask values selected in `[0, 1]`:
-
-            - 1 indicates the head is **not masked**,
-            - 0 indicates the head is **masked**.
-
-        output_attentions (`bool`, *optional*):
-            Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
-            tensors for more detail.
-        output_hidden_states (`bool`, *optional*):
-            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
-            more detail.
-        return_dict (`bool`, *optional*):
-            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-"""
-
-
-@add_start_docstrings(
-    "The bare Swin2SR Model transformer outputting raw hidden-states without any specific head on top.",
-    SWIN2SR_START_DOCSTRING,
-)
+@auto_docstring
 class Swin2SRModel(Swin2SRPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.config = config
 
         if config.num_channels == 3 and config.num_channels_out == 3:
-            rgb_mean = (0.4488, 0.4371, 0.4040)
-            self.mean = torch.Tensor(rgb_mean).view(1, 3, 1, 1)
+            mean = torch.tensor([0.4488, 0.4371, 0.4040]).view(1, 3, 1, 1)
         else:
-            self.mean = torch.zeros(1, 1, 1, 1)
+            mean = torch.zeros(1, 1, 1, 1)
+        self.register_buffer("mean", mean, persistent=False)
+
         self.img_range = config.img_range
 
         self.first_convolution = nn.Conv2d(config.num_channels, config.embed_dim, 3, 1, 1)
@@ -882,19 +798,12 @@ class Swin2SRModel(Swin2SRPreTrainedModel):
         pixel_values = nn.functional.pad(pixel_values, (0, modulo_pad_width, 0, modulo_pad_height), "reflect")
 
         # 2. normalize
-        self.mean = self.mean.type_as(pixel_values)
-        pixel_values = (pixel_values - self.mean) * self.img_range
+        mean = self.mean.type_as(pixel_values)
+        pixel_values = (pixel_values - mean) * self.img_range
 
         return pixel_values
 
-    @add_start_docstrings_to_model_forward(SWIN2SR_INPUTS_DOCSTRING)
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutput,
-        config_class=_CONFIG_FOR_DOC,
-        modality="vision",
-        expected_output=_EXPECTED_OUTPUT_SHAPE,
-    )
+    @auto_docstring
     def forward(
         self,
         pixel_values: torch.FloatTensor,
@@ -1088,11 +997,10 @@ class PixelShuffleAuxUpsampler(nn.Module):
         return reconstruction, aux
 
 
-@add_start_docstrings(
-    """
+@auto_docstring(
+    custom_intro="""
     Swin2SR Model transformer with an upsampler head on top for image super resolution and restoration.
-    """,
-    SWIN2SR_START_DOCSTRING,
+    """
 )
 class Swin2SRForImageSuperResolution(Swin2SRPreTrainedModel):
     def __init__(self, config):
@@ -1121,8 +1029,7 @@ class Swin2SRForImageSuperResolution(Swin2SRPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @add_start_docstrings_to_model_forward(SWIN2SR_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=ImageSuperResolutionOutput, config_class=_CONFIG_FOR_DOC)
+    @auto_docstring
     def forward(
         self,
         pixel_values: Optional[torch.FloatTensor] = None,
@@ -1133,8 +1040,6 @@ class Swin2SRForImageSuperResolution(Swin2SRPreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, ImageSuperResolutionOutput]:
         r"""
-        Returns:
-
         Example:
          ```python
          >>> import torch
@@ -1162,6 +1067,10 @@ class Swin2SRForImageSuperResolution(Swin2SRPreTrainedModel):
          >>> # you can visualize `output` with `Image.fromarray`
          ```"""
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        loss = None
+        if labels is not None:
+            raise NotImplementedError("Training is not supported at the moment")
 
         height, width = pixel_values.shape[2:]
 
@@ -1194,10 +1103,6 @@ class Swin2SRForImageSuperResolution(Swin2SRPreTrainedModel):
         reconstruction = reconstruction / self.swin2sr.img_range + self.swin2sr.mean
         reconstruction = reconstruction[:, :, : height * self.upscale, : width * self.upscale]
 
-        loss = None
-        if labels is not None:
-            raise NotImplementedError("Training is not supported at the moment")
-
         if not return_dict:
             output = (reconstruction,) + outputs[1:]
             return ((loss,) + output) if loss is not None else output
@@ -1208,3 +1113,6 @@ class Swin2SRForImageSuperResolution(Swin2SRPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+
+__all__ = ["Swin2SRForImageSuperResolution", "Swin2SRModel", "Swin2SRPreTrainedModel"]

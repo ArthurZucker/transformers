@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # Perceiver
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The Perceiver IO model was proposed in [Perceiver IO: A General Architecture for Structured Inputs &
@@ -81,7 +85,13 @@ alt="drawing" width="600"/>
 This model was contributed by [nielsr](https://huggingface.co/nielsr). The original code can be found
 [here](https://github.com/deepmind/deepmind-research/tree/master/perceiver).
 
-Tips:
+<Tip warning={true}>
+
+Perceiver does **not** work with `torch.nn.DataParallel` due to a bug in PyTorch, see [issue #36035](https://github.com/pytorch/pytorch/issues/36035)
+
+</Tip>
+
+## Resources
 
 - The quickest way to get started with the Perceiver is by checking the [tutorial
   notebooks](https://github.com/NielsRogge/Transformers-Tutorials/tree/master/Perceiver).
@@ -89,13 +99,6 @@ Tips:
 is implemented in the library. Note that the models available in the library only showcase some examples of what you can do
 with the Perceiver. There are many more use cases, including question answering, named-entity recognition, object detection,
 audio classification, video classification, etc.
-
-**Note**:
-
-- Perceiver does **not** work with `torch.nn.DataParallel` due to a bug in PyTorch, see [issue #36035](https://github.com/pytorch/pytorch/issues/36035)
-
-## Documentation resources
-
 - [Text classification task guide](../tasks/sequence_classification)
 - [Masked language modeling task guide](../tasks/masked_language_modeling)
 - [Image classification task guide](../tasks/image_classification)
@@ -127,6 +130,11 @@ audio classification, video classification, etc.
 ## PerceiverImageProcessor
 
 [[autodoc]] PerceiverImageProcessor
+    - preprocess
+
+## PerceiverImageProcessorFast
+
+[[autodoc]] PerceiverImageProcessorFast
     - preprocess
 
 ## PerceiverTextPreprocessor

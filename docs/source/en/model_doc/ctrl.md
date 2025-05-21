@@ -17,12 +17,8 @@ rendered properly in your Markdown viewer.
 # CTRL
 
 <div class="flex flex-wrap space-x-1">
-<a href="https://huggingface.co/models?filter=ctrl">
-<img alt="Models" src="https://img.shields.io/badge/All_model_pages-ctrl-blueviolet">
-</a>
-<a href="https://huggingface.co/spaces/docs-demos/tiny-ctrl">
-<img alt="Spaces" src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue">
-</a>
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
 </div>
 
 ## Overview
@@ -41,7 +37,10 @@ providing more explicit control over text generation. These codes also allow CTR
 training data are most likely given a sequence. This provides a potential method for analyzing large amounts of data
 via model-based source attribution.*
 
-Tips:
+This model was contributed by [keskarnitishr](https://huggingface.co/keskarnitishr). The original code can be found
+[here](https://github.com/salesforce/ctrl).
+
+## Usage tips
 
 - CTRL makes use of control codes to generate text: it requires generations to be started by certain words, sentences
   or links to generate coherent text. Refer to the [original implementation](https://github.com/salesforce/ctrl) for
@@ -56,10 +55,8 @@ Tips:
   pre-computed values in the context of text generation. See the [`forward`](model_doc/ctrl#transformers.CTRLModel.forward)
   method for more information on the usage of this argument.
 
-This model was contributed by [keskarnitishr](https://huggingface.co/keskarnitishr). The original code can be found
-[here](https://github.com/salesforce/ctrl).
 
-## Documentation resources
+## Resources
 
 - [Text classification task guide](../tasks/sequence_classification)
 - [Causal language modeling task guide](../tasks/language_modeling)
@@ -72,6 +69,9 @@ This model was contributed by [keskarnitishr](https://huggingface.co/keskarnitis
 
 [[autodoc]] CTRLTokenizer
     - save_vocabulary
+
+<frameworkcontent>
+<pt>
 
 ## CTRLModel
 
@@ -88,6 +88,9 @@ This model was contributed by [keskarnitishr](https://huggingface.co/keskarnitis
 [[autodoc]] CTRLForSequenceClassification
     - forward
 
+</pt>
+<tf>
+
 ## TFCTRLModel
 
 [[autodoc]] TFCTRLModel
@@ -102,3 +105,6 @@ This model was contributed by [keskarnitishr](https://huggingface.co/keskarnitis
 
 [[autodoc]] TFCTRLForSequenceClassification
     - call
+
+</tf>
+</frameworkcontent>

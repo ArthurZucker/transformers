@@ -1,4 +1,4 @@
-<!--Copyright 2022 The HuggingFace Team. All rights reserved.
+<!--Copyright 2024 The HuggingFace Team. All rights reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 the License. You may obtain a copy of the License at
@@ -13,12 +13,19 @@ rendered properly in your Markdown viewer.
 
 -->
 
-# Training on Specialized Hardware
+# Apple Silicon
 
-<Tip>
+Apple Silicon (M series) features a unified memory architecture, making it possible to efficiently train large models locally and improves performance by reducing latency associated with data retrieval. You can take advantage of Apple Silicon for training with PyTorch due to its integration with [Metal Performance Shaders (MPS)](https://pytorch.org/docs/stable/notes/mps.html).
 
- Note: Most of the strategies introduced in the [single GPU section](perf_train_gpu_one) (such as mixed precision training or gradient accumulation) and [multi-GPU section](perf_train_gpu_many) are generic and apply to training models in general so make sure to have a look at it before diving into this section.
+The `mps` backend requires macOS 12.3 or later.
 
-</Tip>
+> [!WARNING]
+> Some PyTorch operations are not implemented in MPS yet. To avoid an error, set the environment variable `PYTORCH_ENABLE_MPS_FALLBACK=1` to fallback on the CPU kernels. Please open an issue in the [PyTorch](https://github.com/pytorch/pytorch/issues) repository if you encounter any other issues.
 
-This document will be completed soon with information on how to train on specialized hardware.
+[`TrainingArguments`] and [`Trainer`] detects and sets the backend device to `mps` if an Apple Silicon device is available. No additional changes are required to enable training on your device.
+
+The `mps` backend doesn't support [distributed training](https://pytorch.org/docs/stable/distributed.html#backends).
+
+## Resources
+
+Learn more about the MPS backend in the [Introducing Accelerated PyTorch Training on Mac](https://pytorch.org/blog/introducing-accelerated-pytorch-training-on-mac/) blog post.

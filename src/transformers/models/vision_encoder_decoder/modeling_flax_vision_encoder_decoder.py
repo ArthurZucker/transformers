@@ -12,8 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Classes to support Vision-Encoder-Text-Decoder architectures"""
-
+"""Classes to support Vision-Encoder-Text-Decoder architectures"""
 
 import os
 from typing import Optional, Tuple, Union
@@ -272,6 +271,7 @@ class FlaxVisionEncoderDecoderModel(FlaxPreTrainedModel):
     another one as decoder module when created with the :meth*~transformers.FlaxAutoModel.from_pretrained* class method
     for the encoder and :meth*~transformers.FlaxAutoModelForCausalLM.from_pretrained* class method for the decoder.
     """
+
     config_class = VisionEncoderDecoderConfig
     base_model_prefix = "vision_encoder_decoder"
     main_input_name = "pixel_values"
@@ -400,7 +400,7 @@ class FlaxVisionEncoderDecoderModel(FlaxPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         train: bool = False,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: PRNGKey = None,
     ):
         r"""
@@ -420,7 +420,7 @@ class FlaxVisionEncoderDecoderModel(FlaxPreTrainedModel):
 
         >>> # initialize a vit-gpt2 from pretrained ViT and GPT2 models. Note that the cross-attention layers will be randomly initialized
         >>> model = FlaxVisionEncoderDecoderModel.from_encoder_decoder_pretrained(
-        ...     "google/vit-base-patch16-224-in21k", "gpt2"
+        ...     "google/vit-base-patch16-224-in21k", "openai-community/gpt2"
         ... )
 
         >>> pixel_values = image_processor(images=image, return_tensors="np").pixel_values
@@ -473,12 +473,12 @@ class FlaxVisionEncoderDecoderModel(FlaxPreTrainedModel):
         encoder_outputs,
         decoder_attention_mask: Optional[jnp.ndarray] = None,
         decoder_position_ids: Optional[jnp.ndarray] = None,
-        past_key_values: dict = None,
+        past_key_values: Optional[dict] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         train: bool = False,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: PRNGKey = None,
     ):
         r"""
@@ -499,7 +499,7 @@ class FlaxVisionEncoderDecoderModel(FlaxPreTrainedModel):
 
         >>> # initialize a vit-gpt2 from pretrained ViT and GPT2 models. Note that the cross-attention layers will be randomly initialized
         >>> model = FlaxVisionEncoderDecoderModel.from_encoder_decoder_pretrained(
-        ...     "google/vit-base-patch16-224-in21k", "gpt2"
+        ...     "google/vit-base-patch16-224-in21k", "openai-community/gpt2"
         ... )
 
         >>> pixel_values = image_processor(images=image, return_tensors="np").pixel_values
@@ -607,7 +607,7 @@ class FlaxVisionEncoderDecoderModel(FlaxPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         train: bool = False,
-        params: dict = None,
+        params: Optional[dict] = None,
         dropout_rng: PRNGKey = None,
     ):
         r"""
@@ -626,11 +626,11 @@ class FlaxVisionEncoderDecoderModel(FlaxPreTrainedModel):
         >>> image_processor = AutoImageProcessor.from_pretrained("google/vit-base-patch16-224-in21k")
 
         >>> # load output tokenizer
-        >>> tokenizer_output = AutoTokenizer.from_pretrained("gpt2")
+        >>> tokenizer_output = AutoTokenizer.from_pretrained("openai-community/gpt2")
 
         >>> # initialize a vit-gpt2 from pretrained ViT and GPT2 models. Note that the cross-attention layers will be randomly initialized
         >>> model = FlaxVisionEncoderDecoderModel.from_encoder_decoder_pretrained(
-        ...     "google/vit-base-patch16-224-in21k", "gpt2"
+        ...     "google/vit-base-patch16-224-in21k", "openai-community/gpt2"
         ... )
 
         >>> pixel_values = image_processor(images=image, return_tensors="np").pixel_values
@@ -745,13 +745,11 @@ class FlaxVisionEncoderDecoderModel(FlaxPreTrainedModel):
                 Information necessary to initiate the decoder. Can be either:
 
                     - A string, the *model id* of a pretrained model hosted inside a model repo on huggingface.co.
-                      Valid model ids can be located at the root-level, like `bert-base-uncased`, or namespaced under a
-                      user or organization name, like `dbmdz/bert-base-german-cased`.
                     - A path to a *directory* containing model weights saved using
                       [`~FlaxPreTrainedModel.save_pretrained`], e.g., `./my_model_directory/`.
 
             model_args (remaining positional arguments, *optional*):
-                All remaning positional arguments will be passed to the underlying model's `__init__` method.
+                All remaining positional arguments will be passed to the underlying model's `__init__` method.
 
             kwargs (remaining dictionary of keyword arguments, *optional*):
                 Can be used to update the configuration object (after it being loaded) and initiate the model (e.g.,
@@ -770,7 +768,7 @@ class FlaxVisionEncoderDecoderModel(FlaxPreTrainedModel):
 
         >>> # initialize a vit-gpt2 from a pretrained ViT and a pretrained GPT2 model. Note that the cross-attention layers will be randomly initialized
         >>> model = FlaxVisionEncoderDecoderModel.from_encoder_decoder_pretrained(
-        ...     "google/vit-base-patch16-224-in21k", "gpt2"
+        ...     "google/vit-base-patch16-224-in21k", "openai-community/gpt2"
         ... )
         >>> # saving model after fine-tuning
         >>> model.save_pretrained("./vit-gpt2")
@@ -861,3 +859,6 @@ class FlaxVisionEncoderDecoderModel(FlaxPreTrainedModel):
         model.params["decoder"] = decoder.params
 
         return model
+
+
+__all__ = ["FlaxVisionEncoderDecoderModel"]

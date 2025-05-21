@@ -17,6 +17,7 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 
+from ..generation import GenerationConfig
 from ..utils import (
     ExplicitEnum,
     add_end_docstrings,
@@ -25,7 +26,7 @@ from ..utils import (
     is_vision_available,
     logging,
 )
-from .base import PIPELINE_INIT_ARGS, ChunkPipeline
+from .base import ChunkPipeline, build_pipeline_init_args
 from .question_answering import select_starts_ends
 
 
@@ -98,13 +99,17 @@ class ModelType(ExplicitEnum):
     VisionEncoderDecoder = "vision_encoder_decoder"
 
 
-@add_end_docstrings(PIPELINE_INIT_ARGS)
+@add_end_docstrings(build_pipeline_init_args(has_image_processor=True, has_tokenizer=True))
 class DocumentQuestionAnsweringPipeline(ChunkPipeline):
     # TODO: Update task_summary docs to include an example with document QA and then update the first sentence
     """
     Document Question Answering pipeline using any `AutoModelForDocumentQuestionAnswering`. The inputs/outputs are
     similar to the (extractive) question answering pipeline; however, the pipeline takes an image (and optional OCR'd
     words/boxes) as input instead of text context.
+
+    Unless the model you're using explicitly sets these generation parameters in its configuration files
+    (`generation_config.json`), the following default values will be used:
+    - max_new_tokens: 256
 
     Example:
 
@@ -128,6 +133,12 @@ class DocumentQuestionAnsweringPipeline(ChunkPipeline):
     See the up-to-date list of available models on
     [huggingface.co/models](https://huggingface.co/models?filter=document-question-answering).
     """
+
+    _pipeline_calls_generate = True
+    # Make sure the docstring is updated when the default generation config is changed
+    _default_generation_config = GenerationConfig(
+        max_new_tokens=256,
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -189,13 +200,20 @@ class DocumentQuestionAnsweringPipeline(ChunkPipeline):
         if handle_impossible_answer is not None:
             postprocess_params["handle_impossible_answer"] = handle_impossible_answer
 
-        return preprocess_params, {}, postprocess_params
+        forward_params = {}
+        if getattr(self, "assistant_model", None) is not None:
+            forward_params["assistant_model"] = self.assistant_model
+        if getattr(self, "assistant_tokenizer", None) is not None:
+            forward_params["tokenizer"] = self.tokenizer
+            forward_params["assistant_tokenizer"] = self.assistant_tokenizer
+
+        return preprocess_params, forward_params, postprocess_params
 
     def __call__(
         self,
         image: Union["Image.Image", str],
         question: Optional[str] = None,
-        word_boxes: Tuple[str, List[float]] = None,
+        word_boxes: Optional[Tuple[str, List[float]]] = None,
         **kwargs,
     ):
         """
@@ -276,7 +294,7 @@ class DocumentQuestionAnsweringPipeline(ChunkPipeline):
         padding="do_not_pad",
         doc_stride=None,
         max_seq_len=None,
-        word_boxes: Tuple[str, List[float]] = None,
+        word_boxes: Optional[Tuple[str, List[float]]] = None,
         lang=None,
         tesseract_config="",
         timeout=None,
@@ -294,7 +312,10 @@ class DocumentQuestionAnsweringPipeline(ChunkPipeline):
         if input.get("image", None) is not None:
             image = load_image(input["image"], timeout=timeout)
             if self.image_processor is not None:
-                image_features.update(self.image_processor(images=image, return_tensors=self.framework))
+                image_inputs = self.image_processor(images=image, return_tensors=self.framework)
+                if self.framework == "pt":
+                    image_inputs = image_inputs.to(self.torch_dtype)
+                image_features.update(image_inputs)
             elif self.feature_extractor is not None:
                 image_features.update(self.feature_extractor(images=image, return_tensors=self.framework))
             elif self.model_type == ModelType.VisionEncoderDecoder:
@@ -329,7 +350,7 @@ class DocumentQuestionAnsweringPipeline(ChunkPipeline):
             )
 
         if self.model_type == ModelType.VisionEncoderDecoder:
-            task_prompt = f'<s_docvqa><s_question>{input["question"]}</s_question><s_answer>'
+            task_prompt = f"<s_docvqa><s_question>{input['question']}</s_question><s_answer>"
             # Adapted from https://huggingface.co/spaces/nielsr/donut-docvqa/blob/main/app.py
             encoding = {
                 "inputs": image_features["pixel_values"],
@@ -419,14 +440,18 @@ class DocumentQuestionAnsweringPipeline(ChunkPipeline):
                     "is_last": span_idx == num_spans - 1,
                 }
 
-    def _forward(self, model_inputs):
+    def _forward(self, model_inputs, **generate_kwargs):
         p_mask = model_inputs.pop("p_mask", None)
         word_ids = model_inputs.pop("word_ids", None)
         words = model_inputs.pop("words", None)
         is_last = model_inputs.pop("is_last", False)
 
         if self.model_type == ModelType.VisionEncoderDecoder:
-            model_outputs = self.model.generate(**model_inputs)
+            # User-defined `generation_config` passed to the pipeline call take precedence
+            if "generation_config" not in generate_kwargs:
+                generate_kwargs["generation_config"] = self.generation_config
+
+            model_outputs = self.model.generate(**model_inputs, **generate_kwargs)
         else:
             model_outputs = self.model(**model_inputs)
 
@@ -470,6 +495,11 @@ class DocumentQuestionAnsweringPipeline(ChunkPipeline):
         answers = []
         for output in model_outputs:
             words = output["words"]
+
+            if self.framework == "pt" and output["start_logits"].dtype in (torch.bfloat16, torch.float16):
+                output["start_logits"] = output["start_logits"].float()
+            if self.framework == "pt" and output["end_logits"].dtype in (torch.bfloat16, torch.float16):
+                output["end_logits"] = output["end_logits"].float()
 
             starts, ends, scores, min_null_score = select_starts_ends(
                 start=output["start_logits"],

@@ -16,7 +16,6 @@ import math
 from collections import OrderedDict
 
 import torch
-from packaging import version
 from torch import Tensor, nn
 
 from .utils import logging
@@ -33,14 +32,6 @@ class PytorchGELUTanh(nn.Module):
     This implementation is equivalent to NewGELU and FastGELU but much faster. However, it is not an exact numerical
     match due to rounding errors.
     """
-
-    def __init__(self):
-        super().__init__()
-        if version.parse(torch.__version__) < version.parse("1.12.0"):
-            raise ImportError(
-                f"You are using torch=={torch.__version__}, but torch>=1.12.0 is required to use "
-                "PytorchGELUTanh. Please upgrade torch."
-            )
 
     def forward(self, input: Tensor) -> Tensor:
         return nn.functional.gelu(input, approximate="tanh")
@@ -137,19 +128,6 @@ class AccurateGELUActivation(nn.Module):
         return 0.5 * input * (1 + torch.tanh(self.precomputed_constant * (input + 0.044715 * torch.pow(input, 3))))
 
 
-class SiLUActivation(nn.Module):
-    """
-    See Gaussian Error Linear Units (Hendrycks et al., https://arxiv.org/abs/1606.08415) where the SiLU (Sigmoid Linear
-    Unit) was originally introduced and coined, and see Sigmoid-Weighted Linear Units for Neural Network Function
-    Approximation in Reinforcement Learning (Elfwing et al., https://arxiv.org/abs/1702.03118) and Swish: a Self-Gated
-    Activation Function (Ramachandran et al., https://arxiv.org/abs/1710.05941v1) where the SiLU was experimented with
-    later.
-    """
-
-    def forward(self, input: Tensor) -> Tensor:
-        return nn.functional.silu(input)
-
-
 class MishActivation(nn.Module):
     """
     See Mish: A Self-Regularized Non-Monotonic Activation Function (Misra., https://arxiv.org/abs/1908.08681). Also
@@ -158,10 +136,7 @@ class MishActivation(nn.Module):
 
     def __init__(self):
         super().__init__()
-        if version.parse(torch.__version__) < version.parse("1.9.0"):
-            self.act = self._mish_python
-        else:
-            self.act = nn.functional.mish
+        self.act = nn.functional.mish
 
     def _mish_python(self, input: Tensor) -> Tensor:
         return input * torch.tanh(nn.functional.softplus(input))
@@ -219,6 +194,7 @@ ACT2CLS = {
     "gelu_pytorch_tanh": PytorchGELUTanh,
     "gelu_accurate": AccurateGELUActivation,
     "laplace": LaplaceActivation,
+    "leaky_relu": nn.LeakyReLU,
     "linear": LinearActivation,
     "mish": MishActivation,
     "quick_gelu": QuickGELUActivation,
@@ -226,9 +202,10 @@ ACT2CLS = {
     "relu2": ReLUSquaredActivation,
     "relu6": nn.ReLU6,
     "sigmoid": nn.Sigmoid,
-    "silu": SiLUActivation,
-    "swish": SiLUActivation,
+    "silu": nn.SiLU,
+    "swish": nn.SiLU,
     "tanh": nn.Tanh,
+    "prelu": nn.PReLU,
 }
 ACT2FN = ClassInstantier(ACT2CLS)
 

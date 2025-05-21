@@ -17,9 +17,9 @@ rendered properly in your Markdown viewer.
 # RAG
 
 <div class="flex flex-wrap space-x-1">
-<a href="https://huggingface.co/models?filter=rag">
-<img alt="Models" src="https://img.shields.io/badge/All_model_pages-rag-blueviolet">
-</a>
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
+<img alt="FlashAttention" src="https://img.shields.io/badge/%E2%9A%A1%EF%B8%8E%20FlashAttention-eae0c8?style=flat">
 </div>
 
 ## Overview
@@ -52,8 +52,12 @@ parametric-only seq2seq baseline.*
 
 This model was contributed by [ola13](https://huggingface.co/ola13).
 
-Tips:
-- Retrieval-augmented generation (“RAG”) models combine the powers of pretrained dense retrieval (DPR) and Seq2Seq models. RAG models retrieve docs, pass them to a seq2seq model, then marginalize to generate outputs. The retriever and seq2seq modules are initialized from pretrained models, and fine-tuned jointly, allowing both retrieval and generation to adapt to downstream tasks.
+## Usage tips
+
+Retrieval-augmented generation ("RAG") models combine the powers of pretrained dense retrieval (DPR) and Seq2Seq models. 
+RAG models retrieve docs, pass them to a seq2seq model, then marginalize to generate outputs. The retriever and seq2seq 
+modules are initialized from pretrained models, and fine-tuned jointly, allowing both retrieval and generation to adapt 
+to downstream tasks.
 
 ## RagConfig
 
@@ -73,6 +77,9 @@ Tips:
 
 [[autodoc]] RagRetriever
 
+<frameworkcontent>
+<pt>
+
 ## RagModel
 
 [[autodoc]] RagModel
@@ -90,6 +97,9 @@ Tips:
     - forward
     - generate
 
+</pt>
+<tf>
+
 ## TFRagModel
 
 [[autodoc]] TFRagModel
@@ -106,3 +116,6 @@ Tips:
 [[autodoc]] TFRagTokenForGeneration
     - call
     - generate
+
+</tf>
+</frameworkcontent>

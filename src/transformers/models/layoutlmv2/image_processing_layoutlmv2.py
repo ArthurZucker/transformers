@@ -28,8 +28,17 @@ from ...image_utils import (
     make_list_of_images,
     to_numpy_array,
     valid_images,
+    validate_preprocess_arguments,
 )
-from ...utils import TensorType, is_pytesseract_available, is_vision_available, logging, requires_backends
+from ...utils import (
+    TensorType,
+    filter_out_non_signature_kwargs,
+    is_pytesseract_available,
+    is_vision_available,
+    logging,
+    requires_backends,
+)
+from ...utils.import_utils import requires
 
 
 if is_vision_available():
@@ -90,6 +99,7 @@ def apply_tesseract(
     return words, normalized_boxes
 
 
+@requires(backends=("vision",))
 class LayoutLMv2ImageProcessor(BaseImageProcessor):
     r"""
     Constructs a LayoutLMv2 image processor.
@@ -119,7 +129,7 @@ class LayoutLMv2ImageProcessor(BaseImageProcessor):
     def __init__(
         self,
         do_resize: bool = True,
-        size: Dict[str, int] = None,
+        size: Optional[Dict[str, int]] = None,
         resample: PILImageResampling = PILImageResampling.BILINEAR,
         apply_ocr: bool = True,
         ocr_lang: Optional[str] = None,
@@ -186,19 +196,19 @@ class LayoutLMv2ImageProcessor(BaseImageProcessor):
             **kwargs,
         )
 
+    @filter_out_non_signature_kwargs()
     def preprocess(
         self,
         images: ImageInput,
-        do_resize: bool = None,
-        size: Dict[str, int] = None,
+        do_resize: Optional[bool] = None,
+        size: Optional[Dict[str, int]] = None,
         resample: PILImageResampling = None,
-        apply_ocr: bool = None,
+        apply_ocr: Optional[bool] = None,
         ocr_lang: Optional[str] = None,
         tesseract_config: Optional[str] = None,
         return_tensors: Optional[Union[str, TensorType]] = None,
         data_format: ChannelDimension = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
-        **kwargs,
     ) -> PIL.Image.Image:
         """
         Preprocess an image or batch of images.
@@ -248,9 +258,11 @@ class LayoutLMv2ImageProcessor(BaseImageProcessor):
                 "Invalid image type. Must be of type PIL.Image.Image, numpy.ndarray, "
                 "torch.Tensor, tf.Tensor or jax.ndarray."
             )
-
-        if do_resize and size is None:
-            raise ValueError("Size must be specified if do_resize is True.")
+        validate_preprocess_arguments(
+            do_resize=do_resize,
+            size=size,
+            resample=resample,
+        )
 
         # All transformations expect numpy arrays.
         images = [to_numpy_array(image) for image in images]
@@ -286,3 +298,6 @@ class LayoutLMv2ImageProcessor(BaseImageProcessor):
             data["words"] = words_batch
             data["boxes"] = boxes_batch
         return data
+
+
+__all__ = ["LayoutLMv2ImageProcessor"]

@@ -12,10 +12,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" BARK model generation configuration"""
+"""BARK model generation configuration"""
 
 import copy
-from typing import Dict
+from typing import Dict, Optional
 
 from ...generation.configuration_utils import GenerationConfig
 from ...utils import logging
@@ -44,6 +44,7 @@ class BarkSemanticGenerationConfig(GenerationConfig):
         semantic_vocab_size=10_000,
         max_input_semantic_length=256,
         semantic_rate_hz=49.9,
+        min_eos_p=None,
         **kwargs,
     ):
         """Class that holds a generation configuration for [`BarkSemanticModel`].
@@ -55,9 +56,9 @@ class BarkSemanticGenerationConfig(GenerationConfig):
             eos_token_id (`int`, *optional*, defaults to 10_000):
                 The id of the *end-of-sequence* token.
             renormalize_logits (`bool`, *optional*, defaults to `True`):
-                Whether to renormalize the logits after applying all the logits processors or warpers (including the
+                Whether to renormalize the logits after applying all the logits processors (including the
                 custom ones). It's highly recommended to set this flag to `True` as the search algorithms suppose the
-                score logits are normalized but some logit processors or warpers break the normalization.
+                score logits are normalized but some logit processors break the normalization.
             max_new_tokens (`int`, *optional*, defaults to 768):
                 The maximum numbers of tokens to generate, ignoring the number of tokens in the prompt.
             output_scores (`bool`, *optional*, defaults to `False`):
@@ -86,6 +87,10 @@ class BarkSemanticGenerationConfig(GenerationConfig):
                 Max length of semantic input vector.
             semantic_rate_hz (`float`, *optional*, defaults to 49.9):
                 Semantic rate in Hertz.
+            min_eos_p (`float`, *optional*):
+                Minimum threshold of the probability of the EOS token for it to be sampled. This is an early stopping
+                strategy to mitigate potential unwanted generations at the end of a prompt. The original implementation
+                suggests a default value of 0.2.
         """
         super().__init__(
             temperature=temperature,
@@ -107,6 +112,7 @@ class BarkSemanticGenerationConfig(GenerationConfig):
         self.semantic_vocab_size = semantic_vocab_size
         self.max_input_semantic_length = max_input_semantic_length
         self.semantic_rate_hz = semantic_rate_hz
+        self.min_eos_p = min_eos_p
 
 
 class BarkCoarseGenerationConfig(GenerationConfig):
@@ -137,9 +143,9 @@ class BarkCoarseGenerationConfig(GenerationConfig):
 
         Args:
             renormalize_logits (`bool`, *optional*, defaults to `True`):
-                Whether to renormalize the logits after applying all the logits processors or warpers (including the
+                Whether to renormalize the logits after applying all the logits processors (including the
                 custom ones). It's highly recommended to set this flag to `True` as the search algorithms suppose the
-                score logits are normalized but some logit processors or warpers break the normalization.
+                score logits are normalized but some logit processors break the normalization.
             output_scores (`bool`, *optional*, defaults to `False`):
                 Whether or not to return the prediction scores. See `scores` under returned tensors for more details.
             return_dict_in_generate (`bool`, *optional*, defaults to `False`):
@@ -234,15 +240,14 @@ class BarkFineGenerationConfig(GenerationConfig):
 
 class BarkGenerationConfig(GenerationConfig):
     model_type = "bark"
-    is_composition = True
 
     # TODO (joao): nested from_dict
 
     def __init__(
         self,
-        semantic_config: Dict = None,
-        coarse_acoustics_config: Dict = None,
-        fine_acoustics_config: Dict = None,
+        semantic_config: Optional[Dict] = None,
+        coarse_acoustics_config: Optional[Dict] = None,
+        fine_acoustics_config: Optional[Dict] = None,
         sample_rate=24_000,
         codebook_size=1024,
         **kwargs,

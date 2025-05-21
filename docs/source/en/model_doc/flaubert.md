@@ -17,12 +17,8 @@ rendered properly in your Markdown viewer.
 # FlauBERT
 
 <div class="flex flex-wrap space-x-1">
-<a href="https://huggingface.co/models?filter=flaubert">
-<img alt="Models" src="https://img.shields.io/badge/All_model_pages-flaubert-blueviolet">
-</a>
-<a href="https://huggingface.co/spaces/docs-demos/flaubert_small_cased">
-<img alt="Spaces" src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue">
-</a>
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
 </div>
 
 ## Overview
@@ -50,7 +46,7 @@ This model was contributed by [formiel](https://huggingface.co/formiel). The ori
 Tips:
 - Like RoBERTa, without the sentence ordering prediction (so just trained on the MLM objective).
 
-## Documentation resources
+## Resources
 
 - [Text classification task guide](../tasks/sequence_classification)
 - [Token classification task guide](../tasks/token_classification)
@@ -65,6 +61,9 @@ Tips:
 ## FlaubertTokenizer
 
 [[autodoc]] FlaubertTokenizer
+
+<frameworkcontent>
+<pt>
 
 ## FlaubertModel
 
@@ -101,6 +100,9 @@ Tips:
 [[autodoc]] FlaubertForQuestionAnswering
     - forward
 
+</pt>
+<tf>
+
 ## TFFlaubertModel
 
 [[autodoc]] TFFlaubertModel
@@ -130,3 +132,9 @@ Tips:
 
 [[autodoc]] TFFlaubertForQuestionAnsweringSimple
     - call
+
+</tf>
+</frameworkcontent>
+
+
+

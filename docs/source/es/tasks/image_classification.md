@@ -99,7 +99,7 @@ Crea una función de preprocesamiento que aplique las transformaciones y devuelv
 ...     return examples
 ```
 
-Utiliza el método [`with_transform`](https://huggingface.co/docs/datasets/package_reference/main_classes.html?#datasets.Dataset.with_transform) de 🤗 Dataset para aplicar las transformaciones sobre todo el dataset. Las transformaciones se aplican sobre la marcha cuando se carga un elemento del dataset:
+Utiliza el método [`with_transform`](https://huggingface.co/docs/datasets/package_reference/main_classes?#datasets.Dataset.with_transform) de 🤗 Dataset para aplicar las transformaciones sobre todo el dataset. Las transformaciones se aplican sobre la marcha cuando se carga un elemento del dataset:
 
 ```py
 >>> food = food.with_transform(transforms)
@@ -143,7 +143,7 @@ Al llegar a este punto, solo quedan tres pasos:
 >>> training_args = TrainingArguments(
 ...     output_dir="./results",
 ...     per_device_train_batch_size=16,
-...     evaluation_strategy="steps",
+...     eval_strategy="steps",
 ...     num_train_epochs=4,
 ...     fp16=True,
 ...     save_steps=100,
@@ -160,7 +160,7 @@ Al llegar a este punto, solo quedan tres pasos:
 ...     data_collator=data_collator,
 ...     train_dataset=food["train"],
 ...     eval_dataset=food["test"],
-...     tokenizer=image_processor,
+...     processing_class=image_processor,
 ... )
 
 >>> trainer.train()

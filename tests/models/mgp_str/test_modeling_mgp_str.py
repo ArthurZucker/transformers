@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2023 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,9 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Testing suite for the PyTorch MGP-STR model. """
+"""Testing suite for the PyTorch MGP-STR model."""
 
-import inspect
 import unittest
 
 import requests
@@ -32,7 +30,7 @@ if is_torch_available():
     import torch
     from torch import nn
 
-    from transformers import MgpstrForSceneTextRecognition
+    from transformers import MgpstrForSceneTextRecognition, MgpstrModel
 
 
 if is_vision_available():
@@ -119,7 +117,11 @@ class MgpstrModelTester:
 @require_torch
 class MgpstrModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
     all_model_classes = (MgpstrForSceneTextRecognition,) if is_torch_available() else ()
-    pipeline_model_mapping = {"feature-extraction": MgpstrForSceneTextRecognition} if is_torch_available() else {}
+    pipeline_model_mapping = (
+        {"feature-extraction": MgpstrForSceneTextRecognition, "image-feature-extraction": MgpstrModel}
+        if is_torch_available()
+        else {}
+    )
     fx_compatible = False
 
     test_pruning = False
@@ -142,7 +144,7 @@ class MgpstrModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
     def test_inputs_embeds(self):
         pass
 
-    def test_model_common_attributes(self):
+    def test_model_get_set_embeddings(self):
         config, _ = self.model_tester.prepare_config_and_inputs_for_common()
 
         for model_class in self.all_model_classes:
@@ -150,18 +152,6 @@ class MgpstrModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
             self.assertIsInstance(model.get_input_embeddings(), (nn.Module))
             x = model.get_output_embeddings()
             self.assertTrue(x is None or isinstance(x, nn.Linear))
-
-    def test_forward_signature(self):
-        config, _ = self.model_tester.prepare_config_and_inputs_for_common()
-
-        for model_class in self.all_model_classes:
-            model = model_class(config)
-            signature = inspect.signature(model.forward)
-            # signature.parameters is an OrderedDict => so arg_names order is deterministic
-            arg_names = [*signature.parameters.keys()]
-
-            expected_arg_names = ["pixel_values"]
-            self.assertListEqual(arg_names[:1], expected_arg_names)
 
     @unittest.skip(reason="MgpstrModel does not support feedforward chunking")
     def test_feed_forward_chunking(self):
@@ -211,7 +201,7 @@ class MgpstrModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
 
             check_hidden_states_output(inputs_dict, config, model_class)
 
-    # override as the `logit_scale` parameter initilization is different for MgpstrModel
+    # override as the `logit_scale` parameter initialization is different for MgpstrModel
     def test_initialization(self):
         config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
 
@@ -268,4 +258,4 @@ class MgpstrModelIntegrationTest(unittest.TestCase):
             device=torch_device,
         )
 
-        self.assertTrue(torch.allclose(outputs.logits[0][:, 1:4, 1:4], expected_slice, atol=1e-4))
+        torch.testing.assert_close(outputs.logits[0][:, 1:4, 1:4], expected_slice, rtol=1e-4, atol=1e-4)

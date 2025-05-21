@@ -16,6 +16,13 @@ rendered properly in your Markdown viewer.
 
 # ViTMAE
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
+<img alt="FlashAttention" src="https://img.shields.io/badge/%E2%9A%A1%EF%B8%8E%20FlashAttention-eae0c8?style=flat">
+<img alt="SDPA" src="https://img.shields.io/badge/SDPA-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The ViTMAE model was proposed in [Masked Autoencoders Are Scalable Vision Learners](https://arxiv.org/abs/2111.06377v2) by Kaiming He, Xinlei Chen, Saining Xie, Yanghao Li,
@@ -32,7 +39,15 @@ enables us to train large models efficiently and effectively: we accelerate trai
 models that generalize well: e.g., a vanilla ViT-Huge model achieves the best accuracy (87.8%) among methods that use only ImageNet-1K data. Transfer performance in downstream
 tasks outperforms supervised pre-training and shows promising scaling behavior.*
 
-Tips:
+<img src="https://user-images.githubusercontent.com/11435359/146857310-f258c86c-fde6-48e8-9cee-badd2b21bd2c.png"
+alt="drawing" width="600"/> 
+
+<small> MAE architecture. Taken from the <a href="https://arxiv.org/abs/2111.06377">original paper.</a> </small>
+
+This model was contributed by [nielsr](https://huggingface.co/nielsr). TensorFlow version of the model was contributed by [sayakpaul](https://github.com/sayakpaul) and 
+[ariG23498](https://github.com/ariG23498) (equal contribution). The original code can be found [here](https://github.com/facebookresearch/mae). 
+
+## Usage tips
 
 - MAE (masked auto encoding) is a method for self-supervised pre-training of Vision Transformers (ViTs). The pre-training objective is relatively simple:
 by masking a large portion (75%) of the image patches, the model must reconstruct raw pixel values. One can use [`ViTMAEForPreTraining`] for this purpose.
@@ -44,13 +59,33 @@ consists of Transformer blocks) takes as input. Each mask token is a shared, lea
 sin/cos position embeddings are added both to the input of the encoder and the decoder.
 - For a visual understanding of how MAEs work you can check out this [post](https://keras.io/examples/vision/masked_image_modeling/).
 
-<img src="https://user-images.githubusercontent.com/11435359/146857310-f258c86c-fde6-48e8-9cee-badd2b21bd2c.png"
-alt="drawing" width="600"/> 
+### Using Scaled Dot Product Attention (SDPA)
 
-<small> MAE architecture. Taken from the <a href="https://arxiv.org/abs/2111.06377">original paper.</a> </small>
+PyTorch includes a native scaled dot-product attention (SDPA) operator as part of `torch.nn.functional`. This function 
+encompasses several implementations that can be applied depending on the inputs and the hardware in use. See the 
+[official documentation](https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html) 
+or the [GPU Inference](https://huggingface.co/docs/transformers/main/en/perf_infer_gpu_one#pytorch-scaled-dot-product-attention)
+page for more information.
 
-This model was contributed by [nielsr](https://huggingface.co/nielsr). TensorFlow version of the model was contributed by [sayakpaul](https://github.com/sayakpaul) and 
-[ariG23498](https://github.com/ariG23498) (equal contribution). The original code can be found [here](https://github.com/facebookresearch/mae). 
+SDPA is used by default for `torch>=2.1.1` when an implementation is available, but you may also set 
+`attn_implementation="sdpa"` in `from_pretrained()` to explicitly request SDPA to be used.
+
+```
+from transformers import ViTMAEModel
+model = ViTMAEModel.from_pretrained("facebook/vit-mae-base", attn_implementation="sdpa", torch_dtype=torch.float16)
+...
+```
+
+For the best speedups, we recommend loading the model in half-precision (e.g. `torch.float16` or `torch.bfloat16`).
+
+On a local benchmark (A100-40GB, PyTorch 2.3.0, OS Ubuntu 22.04) with `float32` and `facebook/vit-mae-base` model, we saw the following speedups during inference.
+
+|   Batch size |   Average inference time (ms), eager mode |   Average inference time (ms), sdpa model |   Speed up, Sdpa / Eager (x) |
+|--------------|-------------------------------------------|-------------------------------------------|------------------------------|
+|            1 |                                        11 |                                         6 |                      1.83 |
+|            2 |                                         8 |                                         6 |                      1.33 |
+|            4 |                                         8 |                                         6 |                      1.33 |
+|            8 |                                         8 |                                         6 |                      1.33 |
 
 ## Resources
 
@@ -65,26 +100,31 @@ If you're interested in submitting a resource to be included here, please feel f
 
 [[autodoc]] ViTMAEConfig
 
+<frameworkcontent>
+<pt>
 
 ## ViTMAEModel
 
 [[autodoc]] ViTMAEModel
     - forward
 
-
 ## ViTMAEForPreTraining
 
 [[autodoc]] transformers.ViTMAEForPreTraining
     - forward
 
+</pt>
+<tf>
 
 ## TFViTMAEModel
 
 [[autodoc]] TFViTMAEModel
     - call
 
-
 ## TFViTMAEForPreTraining
 
 [[autodoc]] transformers.TFViTMAEForPreTraining
     - call
+
+</tf>
+</frameworkcontent>

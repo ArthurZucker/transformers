@@ -37,6 +37,7 @@ class NougatProcessor(ProcessorMixin):
         tokenizer ([`NougatTokenizerFast`]):
             An instance of [`NougatTokenizerFast`]. The tokenizer is a required input.
     """
+
     attributes = ["image_processor", "tokenizer"]
     image_processor_class = "AutoImageProcessor"
     tokenizer_class = "AutoTokenizer"
@@ -49,16 +50,16 @@ class NougatProcessor(ProcessorMixin):
         self,
         images=None,
         text=None,
-        do_crop_margin: bool = None,
-        do_resize: bool = None,
-        size: Dict[str, int] = None,
+        do_crop_margin: Optional[bool] = None,
+        do_resize: Optional[bool] = None,
+        size: Optional[Dict[str, int]] = None,
         resample: "PILImageResampling" = None,  # noqa: F821
-        do_thumbnail: bool = None,
-        do_align_long_axis: bool = None,
-        do_pad: bool = None,
-        do_rescale: bool = None,
-        rescale_factor: Union[int, float] = None,
-        do_normalize: bool = None,
+        do_thumbnail: Optional[bool] = None,
+        do_align_long_axis: Optional[bool] = None,
+        do_pad: Optional[bool] = None,
+        do_rescale: Optional[bool] = None,
+        rescale_factor: Optional[Union[int, float]] = None,
+        do_normalize: Optional[bool] = None,
         image_mean: Optional[Union[float, List[float]]] = None,
         image_std: Optional[Union[float, List[float]]] = None,
         data_format: Optional["ChannelDimension"] = "channels_first",  # noqa: F821
@@ -157,3 +158,6 @@ class NougatProcessor(ProcessorMixin):
         Please refer to the docstring of this method for more information.
         """
         return self.tokenizer.post_process_generation(*args, **kwargs)
+
+
+__all__ = ["NougatProcessor"]

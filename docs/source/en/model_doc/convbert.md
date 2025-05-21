@@ -17,12 +17,8 @@ rendered properly in your Markdown viewer.
 # ConvBERT
 
 <div class="flex flex-wrap space-x-1">
-<a href="https://huggingface.co/models?filter=convbert">
-<img alt="Models" src="https://img.shields.io/badge/All_model_pages-convbert-blueviolet">
-</a>
-<a href="https://huggingface.co/spaces/docs-demos/conv-bert-base">
-<img alt="Spaces" src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue">
-</a>
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
 </div>
 
 ## Overview
@@ -44,12 +40,14 @@ ConvBERT significantly outperforms BERT and its variants in various downstream t
 fewer model parameters. Remarkably, ConvBERTbase model achieves 86.4 GLUE score, 0.7 higher than ELECTRAbase, while
 using less than 1/4 training cost. Code and pre-trained models will be released.*
 
-ConvBERT training tips are similar to those of BERT.
-
 This model was contributed by [abhishek](https://huggingface.co/abhishek). The original implementation can be found
 here: https://github.com/yitu-opensource/ConvBert
 
-## Documentation resources
+## Usage tips
+
+ConvBERT training tips are similar to those of BERT. For usage tips refer to [BERT documentation](bert).
+
+## Resources
 
 - [Text classification task guide](../tasks/sequence_classification)
 - [Token classification task guide](../tasks/token_classification)
@@ -72,6 +70,9 @@ here: https://github.com/yitu-opensource/ConvBert
 ## ConvBertTokenizerFast
 
 [[autodoc]] ConvBertTokenizerFast
+
+<frameworkcontent>
+<pt>
 
 ## ConvBertModel
 
@@ -103,6 +104,9 @@ here: https://github.com/yitu-opensource/ConvBert
 [[autodoc]] ConvBertForQuestionAnswering
     - forward
 
+</pt>
+<tf>
+
 ## TFConvBertModel
 
 [[autodoc]] TFConvBertModel
@@ -132,3 +136,6 @@ here: https://github.com/yitu-opensource/ConvBert
 
 [[autodoc]] TFConvBertForQuestionAnswering
     - call
+
+</tf>
+</frameworkcontent>

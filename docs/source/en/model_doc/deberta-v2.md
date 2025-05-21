@@ -16,6 +16,11 @@ rendered properly in your Markdown viewer.
 
 # DeBERTa-v2
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
+</div>
+
 ## Overview
 
 The DeBERTa model was proposed in [DeBERTa: Decoding-enhanced BERT with Disentangled Attention](https://arxiv.org/abs/2006.03654) by Pengcheng He, Xiaodong Liu, Jianfeng Gao, Weizhu Chen It is based on Google's
@@ -62,7 +67,7 @@ New in v2:
 This model was contributed by [DeBERTa](https://huggingface.co/DeBERTa). This model TF 2.0 implementation was
 contributed by [kamalkraj](https://huggingface.co/kamalkraj). The original code can be found [here](https://github.com/microsoft/DeBERTa).
 
-## Documentation resources
+## Resources
 
 - [Text classification task guide](../tasks/sequence_classification)
 - [Token classification task guide](../tasks/token_classification)
@@ -87,6 +92,9 @@ contributed by [kamalkraj](https://huggingface.co/kamalkraj). The original code 
 [[autodoc]] DebertaV2TokenizerFast
     - build_inputs_with_special_tokens
     - create_token_type_ids_from_sequences
+
+<frameworkcontent>
+<pt>
 
 ## DebertaV2Model
 
@@ -123,6 +131,9 @@ contributed by [kamalkraj](https://huggingface.co/kamalkraj). The original code 
 [[autodoc]] DebertaV2ForMultipleChoice
     - forward
 
+</pt>
+<tf>
+
 ## TFDebertaV2Model
 
 [[autodoc]] TFDebertaV2Model
@@ -157,3 +168,6 @@ contributed by [kamalkraj](https://huggingface.co/kamalkraj). The original code 
 
 [[autodoc]] TFDebertaV2ForMultipleChoice
     - call
+
+</tf>
+</frameworkcontent>

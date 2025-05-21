@@ -16,6 +16,10 @@ rendered properly in your Markdown viewer.
 
 # BigBirdPegasus
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+</div>
+
 ## Overview
 
 The BigBird model was proposed in [Big Bird: Transformers for Longer Sequences](https://arxiv.org/abs/2007.14062) by
@@ -41,7 +45,9 @@ sequence as part of the sparse attention mechanism. The proposed sparse attentio
 BigBird drastically improves performance on various NLP tasks such as question answering and summarization. We also
 propose novel applications to genomics data.*
 
-Tips:
+The original code can be found [here](https://github.com/google-research/bigbird).
+
+## Usage tips
 
 - For an in-detail explanation on how BigBird's attention works, see [this blog post](https://huggingface.co/blog/big-bird).
 - BigBird comes with 2 implementations: **original_full** & **block_sparse**. For the sequence length < 1024, using
@@ -54,9 +60,7 @@ Tips:
 - BigBird is a model with absolute position embeddings so it's usually advised to pad the inputs on the right rather than
   the left.
 
-The original code can be found [here](https://github.com/google-research/bigbird).
-
-## Documentation resources
+## Resources
 
 - [Text classification task guide](../tasks/sequence_classification)
 - [Question answering task guide](../tasks/question_answering)

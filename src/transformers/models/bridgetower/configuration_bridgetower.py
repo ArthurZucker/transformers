@@ -12,23 +12,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND=, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" BridgeTower model configuration"""
-
-import os
-from typing import Union
+"""BridgeTower model configuration"""
 
 from ...configuration_utils import PretrainedConfig
 from ...utils import logging
 
 
 logger = logging.get_logger(__name__)
-
-BRIDGETOWER_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "BridgeTower/bridgetower-base": "https://huggingface.co/BridgeTower/bridgetower-base/blob/main/config.json",
-    "BridgeTower/bridgetower-base-itm-mlm": (
-        "https://huggingface.co/BridgeTower/bridgetower-base-itm-mlm/blob/main/config.json"
-    ),
-}
 
 
 class BridgeTowerVisionConfig(PretrainedConfig):
@@ -49,7 +39,7 @@ class BridgeTowerVisionConfig(PretrainedConfig):
             The size (resolution) of each patch.
         image_size (`int`, *optional*, defaults to 288):
             The size (resolution) of each image.
-        initializer_factor (`float``, *optional*, defaults to 1):
+        initializer_factor (`float`, *optional*, defaults to 1):
             A factor for initializing all weight matrices (should be kept to 1, used internally for initialization
             testing).
         layer_norm_eps (`float`, *optional*, defaults to 1e-05):
@@ -73,7 +63,9 @@ class BridgeTowerVisionConfig(PretrainedConfig):
     >>> # Accessing the configuration
     >>> configuration
     ```"""
+
     model_type = "bridgetower_vision_model"
+    base_config_key = "vision_config"
 
     def __init__(
         self,
@@ -100,21 +92,6 @@ class BridgeTowerVisionConfig(PretrainedConfig):
         self.stop_gradient = stop_gradient
         self.share_layernorm = share_layernorm
         self.remove_last_layer = remove_last_layer
-
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs) -> "PretrainedConfig":
-        config_dict, kwargs = cls.get_config_dict(pretrained_model_name_or_path, **kwargs)
-
-        if config_dict.get("model_type") == "bridgetower":
-            config_dict = config_dict["text_config"]
-
-        if "model_type" in config_dict and hasattr(cls, "model_type") and config_dict["model_type"] != cls.model_type:
-            logger.warning(
-                f"You are using a model of type {config_dict['model_type']} to instantiate a model of type "
-                f"{cls.model_type}. This is not supported for all configurations of models and can yield errors."
-            )
-
-        return cls.from_dict(config_dict, **kwargs)
 
 
 class BridgeTowerTextConfig(PretrainedConfig):
@@ -151,7 +128,7 @@ class BridgeTowerTextConfig(PretrainedConfig):
             just in case (e.g., 512 or 1024 or 2048).
         type_vocab_size (`int`, *optional*, defaults to 2):
             The vocabulary size of the `token_type_ids`.
-        initializer_factor (`float``, *optional*, defaults to 1):
+        initializer_factor (`float`, *optional*, defaults to 1):
             A factor for initializing all weight matrices (should be kept to 1, used internally for initialization
             testing).
         layer_norm_eps (`float`, *optional*, defaults to 1e-05):
@@ -179,7 +156,9 @@ class BridgeTowerTextConfig(PretrainedConfig):
     >>> # Accessing the configuration
     >>> configuration
     ```"""
+
     model_type = "bridgetower_text_model"
+    base_config_key = "text_config"
 
     def __init__(
         self,
@@ -222,21 +201,6 @@ class BridgeTowerTextConfig(PretrainedConfig):
         self.bos_token_id = bos_token_id
         self.eos_token_id = eos_token_id
 
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs) -> "PretrainedConfig":
-        config_dict, kwargs = cls.get_config_dict(pretrained_model_name_or_path, **kwargs)
-
-        if config_dict.get("model_type") == "bridgetower":
-            config_dict = config_dict["text_config"]
-
-        if "model_type" in config_dict and hasattr(cls, "model_type") and config_dict["model_type"] != cls.model_type:
-            logger.warning(
-                f"You are using a model of type {config_dict['model_type']} to instantiate a model of type "
-                f"{cls.model_type}. This is not supported for all configurations of models and can yield errors."
-            )
-
-        return cls.from_dict(config_dict, **kwargs)
-
 
 class BridgeTowerConfig(PretrainedConfig):
     r"""
@@ -255,7 +219,7 @@ class BridgeTowerConfig(PretrainedConfig):
             The non-linear activation function (function or string) in the encoder and pooler.
         hidden_size (`int`, *optional*, defaults to 768):
             Dimensionality of the encoder layers and the pooler layer.
-        initializer_factor (`float``, *optional*, defaults to 1):
+        initializer_factor (`float`, *optional*, defaults to 1):
             A factor for initializing all weight matrices (should be kept to 1, used internally for initialization
             testing).
         layer_norm_eps (`float`, *optional*, defaults to 1e-05):
@@ -291,7 +255,9 @@ class BridgeTowerConfig(PretrainedConfig):
     >>> # Accessing the model configuration
     >>> configuration = model.config
     ```"""
+
     model_type = "bridgetower"
+    sub_configs = {"text_config": BridgeTowerTextConfig, "vision_config": BridgeTowerVisionConfig}
 
     def __init__(
         self,
@@ -348,3 +314,6 @@ class BridgeTowerConfig(PretrainedConfig):
         """
 
         return cls(text_config=text_config.to_dict(), vision_config=vision_config.to_dict(), **kwargs)
+
+
+__all__ = ["BridgeTowerConfig", "BridgeTowerTextConfig", "BridgeTowerVisionConfig"]

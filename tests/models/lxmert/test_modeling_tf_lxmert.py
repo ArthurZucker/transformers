@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2020 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,7 +33,7 @@ if is_tf_available():
     from transformers.models.lxmert.modeling_tf_lxmert import TFLxmertForPreTraining, TFLxmertModel
 
 
-class TFLxmertModelTester(object):
+class TFLxmertModelTester:
     def __init__(
         self,
         parent,
@@ -499,7 +498,7 @@ class TFLxmertModelTest(TFModelTesterMixin, PipelineTesterMixin, unittest.TestCa
                 pt_inputs_dict[key] = self.prepare_pt_inputs_from_tf_inputs(value)
             elif isinstance(value, (list, tuple)):
                 pt_inputs_dict[key] = (self.prepare_pt_inputs_from_tf_inputs(iter_value) for iter_value in value)
-            elif type(key) == bool:
+            elif isinstance(key, bool):
                 pt_inputs_dict[key] = value
             elif key == "input_values":
                 pt_inputs_dict[key] = torch.from_numpy(value.numpy()).to(torch.float32)

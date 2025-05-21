@@ -16,6 +16,11 @@ rendered properly in your Markdown viewer.
 
 # Speech2Text
 
+<div class="flex flex-wrap space-x-1">
+<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-DE3412?style=flat&logo=pytorch&logoColor=white">
+<img alt="TensorFlow" src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat&logo=tensorflow&logoColor=white">
+</div>
+
 ## Overview
 
 The Speech2Text model was proposed in [fairseq S2T: Fast Speech-to-Text Modeling with fairseq](https://arxiv.org/abs/2010.05171) by Changhan Wang, Yun Tang, Xutai Ma, Anne Wu, Dmytro Okhonko, Juan Pino. It's a
@@ -26,7 +31,6 @@ transcripts/translations autoregressively. Speech2Text has been fine-tuned on se
 [LibriSpeech](http://www.openslr.org/12), [CoVoST 2](https://github.com/facebookresearch/covost), [MuST-C](https://ict.fbk.eu/must-c/).
 
 This model was contributed by [valhalla](https://huggingface.co/valhalla). The original code can be found [here](https://github.com/pytorch/fairseq/tree/master/examples/speech_to_text).
-
 
 ## Inference
 
@@ -43,7 +47,6 @@ The feature extractor depends on `torchaudio` and the tokenizer depends on `sent
 install those packages before running the examples. You could either install those as extra speech dependencies with
 `pip install transformers"[speech, sentencepiece]"` or install the packages separately with `pip install torchaudio sentencepiece`. Also `torchaudio` requires the development version of the [libsndfile](http://www.mega-nerd.com/libsndfile/) package which can be installed via a system package manager. On Ubuntu it can
 be installed as follows: `apt install libsndfile1-dev`
-
 
 - ASR and Speech Translation
 
@@ -71,7 +74,7 @@ be installed as follows: `apt install libsndfile1-dev`
   For multilingual speech translation models, `eos_token_id` is used as the `decoder_start_token_id` and
   the target language id is forced as the first generated token. To force the target language id as the first
   generated token, pass the `forced_bos_token_id` parameter to the `generate()` method. The following
-  example shows how to transate English speech to French text using the *facebook/s2t-medium-mustc-multilingual-st*
+  example shows how to translate English speech to French text using the *facebook/s2t-medium-mustc-multilingual-st*
   checkpoint.
 
 ```python
@@ -97,7 +100,6 @@ be installed as follows: `apt install libsndfile1-dev`
 ```
 
 See the [model hub](https://huggingface.co/models?filter=speech_to_text) to look for Speech2Text checkpoints.
-
 
 ## Speech2TextConfig
 
@@ -125,6 +127,9 @@ See the [model hub](https://huggingface.co/models?filter=speech_to_text) to look
     - batch_decode
     - decode
 
+<frameworkcontent>
+<pt>
+
 ## Speech2TextModel
 
 [[autodoc]] Speech2TextModel
@@ -135,6 +140,9 @@ See the [model hub](https://huggingface.co/models?filter=speech_to_text) to look
 [[autodoc]] Speech2TextForConditionalGeneration
     - forward
 
+</pt>
+<tf>
+
 ## TFSpeech2TextModel
 
 [[autodoc]] TFSpeech2TextModel
@@ -144,3 +152,6 @@ See the [model hub](https://huggingface.co/models?filter=speech_to_text) to look
 
 [[autodoc]] TFSpeech2TextForConditionalGeneration
     - call
+
+</tf>
+</frameworkcontent>

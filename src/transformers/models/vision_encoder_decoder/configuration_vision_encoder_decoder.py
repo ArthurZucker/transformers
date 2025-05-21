@@ -59,7 +59,7 @@ class VisionEncoderDecoderConfig(PretrainedConfig):
 
     >>> config = VisionEncoderDecoderConfig.from_encoder_decoder_configs(config_encoder, config_decoder)
 
-    >>> # Initializing a ViTBert model (with random weights) from a ViT & bert-base-uncased style configurations
+    >>> # Initializing a ViTBert model (with random weights) from a ViT & google-bert/bert-base-uncased style configurations
     >>> model = VisionEncoderDecoderModel(config=config)
 
     >>> # Accessing the model configuration
@@ -76,14 +76,16 @@ class VisionEncoderDecoderConfig(PretrainedConfig):
     >>> encoder_decoder_config = VisionEncoderDecoderConfig.from_pretrained("my-model")
     >>> model = VisionEncoderDecoderModel.from_pretrained("my-model", config=encoder_decoder_config)
     ```"""
+
     model_type = "vision-encoder-decoder"
-    is_composition = True
+    sub_configs = {"encoder": AutoConfig, "decoder": AutoConfig}
+    has_no_defaults_at_init = True
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if "encoder" not in kwargs or "decoder" not in kwargs:
             raise ValueError(
-                f"A configuraton of type {self.model_type} cannot be instantiated because "
+                f"A configuration of type {self.model_type} cannot be instantiated because "
                 f"not both `encoder` and `decoder` sub-configurations are passed, but only {kwargs}"
             )
 
@@ -206,3 +208,6 @@ class VisionEncoderDecoderOnnxConfig(OnnxConfig):
         """
         decoder_config.encoder_hidden_size = encoder_config.hidden_size
         return VisionEncoderDecoderDecoderOnnxConfig(decoder_config, feature)
+
+
+__all__ = ["VisionEncoderDecoderConfig", "VisionEncoderDecoderOnnxConfig"]

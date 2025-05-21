@@ -15,6 +15,7 @@
 """
 Text/audio processor class for MusicGen
 """
+
 from typing import List, Optional
 
 import numpy as np
@@ -37,6 +38,7 @@ class MusicgenProcessor(ProcessorMixin):
         tokenizer (`T5Tokenizer`):
             An instance of [`T5Tokenizer`]. The tokenizer is a required input.
     """
+
     feature_extractor_class = "EncodecFeatureExtractor"
     tokenizer_class = ("T5Tokenizer", "T5TokenizerFast")
 
@@ -51,7 +53,7 @@ class MusicgenProcessor(ProcessorMixin):
     def __call__(self, *args, **kwargs):
         """
         Forwards the `audio` argument to EncodecFeatureExtractor's [`~EncodecFeatureExtractor.__call__`] and the `text`
-        argument to [`~T5Tokenizer.__call__`]. Please refer to the doctsring of the above two methods for more
+        argument to [`~T5Tokenizer.__call__`]. Please refer to the docstring of the above two methods for more
         information.
         """
         # For backward compatibility
@@ -137,3 +139,6 @@ class MusicgenProcessor(ProcessorMixin):
             audio_values[i] = sliced_audio.reshape(channels, -1)
 
         return audio_values
+
+
+__all__ = ["MusicgenProcessor"]
