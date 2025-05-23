@@ -203,6 +203,17 @@ jobs:
             - run: python utils/update_metadata.py --check-only
             - run: python utils/check_docstrings.py
 
+    new_model_training:
+        working_directory: ~/transformers
+        docker:
+            - image: huggingface/transformers-quality
+        resource_class: medium
+        steps:
+            - checkout
+            - run: git fetch --unshallow || true
+            - run: uv pip install -e .[quality]
+            - run: python scripts/new_model_ci.py
+
 workflows:
     version: 2
     setup_and_quality:
@@ -236,3 +247,12 @@ workflows:
             - check_code_quality
             - check_repository_consistency
             - fetch_all_tests
+
+    new_model_pipeline:
+        when:
+            and:
+                - equal: [<< pipeline.git.branch >>, "main"]
+                - not: <<pipeline.parameters.nightly>>
+        jobs:
+            - check_circleci_user
+            - new_model_training
