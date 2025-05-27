@@ -20,7 +20,8 @@ in chronological order to avoid merge conflicts. An equivalent way to do this is
 
 Potential TODO: automatically cherry-picks them.
 
-Pass in a list of PR:
+Pass in a list of PR with `--prs` to generate the list of commits to cherry-pick.
+If `--prs` is omitted, all PRs merged with the label `for-patch` will be used.
 `python utils/patch_helper.py --prs 31108 31054 31008 31010 31004`
 will produce the following:
 ```bash
@@ -36,9 +37,38 @@ git cherry-pick 0bef4a273825d2cfc52ddfe62ba486ee61cc116f #2024-05-29 13:33:26+01
 """
 
 import argparse
+import os
+from typing import List
 
+import requests
 from git import GitCommandError, Repo
 from packaging import version
+
+
+def fetch_for_patch_pr_numbers() -> List[str]:
+    """Return PR numbers labeled ``for-patch`` that are merged."""
+    headers = {"Accept": "application/vnd.github+json"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    url = "https://api.github.com/search/issues"
+    query = "repo:huggingface/transformers is:pr label:for-patch is:merged"
+    pr_numbers: List[str] = []
+    page = 1
+    while True:
+        params = {"q": query, "per_page": 100, "page": page}
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code != 200:
+            print(f"Failed to fetch PRs: {response.status_code} {response.text}")
+            break
+        data = response.json()
+        pr_numbers.extend([str(item["number"]) for item in data.get("items", [])])
+        if "next" not in response.links:
+            break
+        page += 1
+
+    return pr_numbers
 
 
 def get_merge_commit(repo, pr_number, since_tag):
@@ -91,5 +121,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     if args.prs is None:
-        args.prs = "https://github.com/huggingface/transformers/pull/33753  https://github.com/huggingface/transformers/pull/33861  https://github.com/huggingface/transformers/pull/33906  https://github.com/huggingface/transformers/pull/33761  https://github.com/huggingface/transformers/pull/33586  https://github.com/huggingface/transformers/pull/33766  https://github.com/huggingface/transformers/pull/33958 https://github.com/huggingface/transformers/pull/33965".split()
+        args.prs = fetch_for_patch_pr_numbers()
     main(args.prs)
