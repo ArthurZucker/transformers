@@ -292,12 +292,15 @@ Once you're able to run the original checkpoint, you're ready to start adapting 
 
 ## Adapt the model code
 
-The `transformers add-new-model-like` command should have generated a model and configuration file.
+The `transformers add-new-model-like` command should have generated a modular modeling file and configuration file.
 
-- `src/transformers/models/brand_new_llama/modeling_brand_new_llama.py`
+- `src/transformers/models/brand_new_llama/modular_brand_new_llama.py`
 - `src/transformers/models/brand_new_llama/configuration_brand_new_llama.py`
 
-The automatically generated code in the `modeling.py` file has the same architecture as Llama if you answered it's a decoder-only model or it will have the same architecture as BART if you answered it's an encoder-decoder model. The generated code is just a starting point. Based on your research on the new model, you'll need to implement those specific changes by adapting the generated code. This may involve changes to the self-attention layer, the order of the normalization layer, and so on.
+After adapting the modular file, convert it to `modeling_brand_new_llama.py` with:
+`python utils/modular_model_converter.py --files_to_parse src/transformers/models/brand_new_llama/modular_brand_new_llama.py`
+
+The automatically generated code in the modular file has the same architecture as Llama if you answered it's a decoder-only model or it will have the same architecture as BART if you answered it's an encoder-decoder model. The generated code is just a starting point. Based on your research on the new model, you'll need to implement those specific changes by adapting the generated code. This may involve changes to the self-attention layer, the order of the normalization layer, and so on.
 
 ### Model initialization
 
