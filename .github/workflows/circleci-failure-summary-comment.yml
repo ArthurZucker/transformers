@@ -1,6 +1,6 @@
 name: CircleCI Failure Summary Comment
 # Requires repository secrets:
-# - CIRCLE_TOKEN: API token with permission to query CircleCI pipelines
+# - CI_ARTIFACT_TOKEN: API token with permission to query CircleCI pipelines (same value used by CircleCI contexts)
 
 on:
   pull_request:
@@ -15,7 +15,7 @@ jobs:
       TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
       TARGET_SHA: ${{ github.event.pull_request.head.sha }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
-      CIRCLE_TOKEN: ${{ secrets.CIRCLE_TOKEN }}
+      CIRCLE_TOKEN: ${{ secrets.CI_ARTIFACT_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -58,14 +58,14 @@ jobs:
       - name: Find CircleCI workflow
         id: circleci
         env:
-          CIRCLE_TOKEN: ${{ secrets.CIRCLE_TOKEN }}
+          CIRCLE_TOKEN: ${{ secrets.CI_ARTIFACT_TOKEN }}
         run: |
           WORKFLOW_ID=$(python scripts/find_circleci_workflow.py --branch "$TARGET_BRANCH" --sha "$TARGET_SHA")
           echo "workflow_id=$WORKFLOW_ID" >> $GITHUB_OUTPUT
 
       - name: Generate failure summary
         env:
-          CIRCLE_TOKEN: ${{ secrets.CIRCLE_TOKEN }}
+          CIRCLE_TOKEN: ${{ secrets.CI_ARTIFACT_TOKEN }}
         run: |
           python utils/process_circleci_workflow_test_reports.py --workflow_id "${{ steps.circleci.outputs.workflow_id }}"
 
