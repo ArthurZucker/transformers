@@ -8,7 +8,7 @@
 #   python scripts/find_circleci_workflow.py --branch main --sha <commit_sha>
 #
 # Environment:
-#   CIRCLECI_TOKEN must be set with a token that has permission to query the CircleCI API.
+#   CIRCLE_TOKEN must be set with a token that has permission to query the CircleCI API.
 
 from __future__ import annotations
 
@@ -25,9 +25,9 @@ PROJECT_SLUG = "gh/huggingface/transformers"
 
 
 def _get_circle_token(token: Optional[str]) -> str:
-    token = token or os.environ.get("CIRCLECI_TOKEN") or os.environ.get("CCI_TOKEN") or os.environ.get("CIRCLE_TOKEN")
+    token = token or os.environ.get("CIRCLE_TOKEN") or os.environ.get("CCI_TOKEN") or os.environ.get("CIRCLE_TOKEN")
     if not token:
-        raise SystemExit("CIRCLECI_TOKEN (or CCI_TOKEN / CIRCLE_TOKEN) must be provided.")
+        raise SystemExit("CIRCLE_TOKEN (or CCI_TOKEN / CIRCLE_TOKEN) must be provided.")
     return token
 
 
