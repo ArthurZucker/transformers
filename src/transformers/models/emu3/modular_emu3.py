@@ -21,8 +21,8 @@ from typing import Optional, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint
 
+from ... import initialization as init
 from ...cache_utils import Cache
 from ...generation import GenerationMixin
 from ...modeling_outputs import CausalLMOutputWithPast
@@ -56,12 +56,12 @@ class Emu3DecoderLayer(LlamaDecoderLayer):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values: Optional[Cache] = None,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
+    ) -> torch.Tensor:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
 
@@ -69,7 +69,7 @@ class Emu3DecoderLayer(LlamaDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_value=past_key_value,
+            past_key_values=past_key_values,
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
@@ -677,6 +677,7 @@ class Emu3VQVAE(PreTrainedModel):
     config: Emu3VQVAEConfig
     base_model_prefix = "emuvideovq"
     main_input_name = "pixel_values"
+    input_modalities = "image"
     _supports_sdpa = True
     _supports_flash_attn = True
     _supports_flex_attn = True
@@ -688,26 +689,28 @@ class Emu3VQVAE(PreTrainedModel):
         "Emu3VQVAEVectorQuantizer",
     ]
 
+    @torch.no_grad()
     def _init_weights(self, module):
         if isinstance(module, (nn.Conv2d, nn.Conv3d)):
-            nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
+            init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
             if module.bias is not None:
-                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(module.weight)
+                fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(module.weight)
                 bound = 1 / math.sqrt(fan_in)
-                nn.init.uniform_(module.bias, -bound, bound)
+                init.uniform_(module.bias, -bound, bound)
         elif isinstance(module, nn.Linear):
-            nn.init.kaiming_uniform_(module.weight, a=math.sqrt(5))
+            init.kaiming_uniform_(module.weight, a=math.sqrt(5))
             if module.bias is not None:
-                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(module.weight)
+                fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(module.weight)
                 bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
-                nn.init.uniform_(module.bias, -bound, bound)
+                init.uniform_(module.bias, -bound, bound)
         elif isinstance(module, (nn.BatchNorm2d, nn.BatchNorm3d, nn.GroupNorm)):
-            nn.init.constant_(module.weight, 1.0)
-            nn.init.constant_(module.bias, 0.0)
+            init.constant_(module.weight, 1.0)
+            init.constant_(module.bias, 0.0)
         elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_()
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
+            init.normal_(module.weight)
+            # Here we need the check explicitly, as we slice the weight in the `zeros_` call, so it looses the flag
+            if module.padding_idx is not None and not getattr(module.weight, "_is_hf_initialized", False):
+                init.zeros_(module.weight[module.padding_idx])
 
     def __init__(self, config: Emu3VQVAEConfig):
         super().__init__(config)
@@ -876,7 +879,7 @@ class Emu3ForCausalLM(LlamaForCausalLM, Emu3PreTrainedModel, GenerationMixin):
         >>> import requests
         >>> from PIL import Image
 
-        >>> model = Emu3ForCausalLM.from_pretrained("BAAI/Emu3-Chat-hf", torch_dtype=torch.bfloat16)
+        >>> model = Emu3ForCausalLM.from_pretrained("BAAI/Emu3-Chat-hf", dtype=torch.bfloat16)
         >>> processor = Emu3Processor.from_pretrained("BAAI/Emu3-Chat-hf")
 
         >>> inputs = processor(text=["Can you write me a poem about winter."], return_tensors="pt").to(model.device)
@@ -889,7 +892,6 @@ class Emu3ForCausalLM(LlamaForCausalLM, Emu3PreTrainedModel, GenerationMixin):
 
 class Emu3Model(Emu3PreTrainedModel):
     _checkpoint_conversion_mapping = {"text_model.model": "text_model"}
-    _supports_static_cache = False  # `get_image_tokens()`, called when `pixel_values` is passed, is not compileable
 
     def __init__(self, config):
         super().__init__(config)
@@ -947,7 +949,7 @@ class Emu3Model(Emu3PreTrainedModel):
         image_features = torch.split(image_features, split_sizes)
         return image_features
 
-    @torch.no_grad
+    @torch.no_grad()
     def decode_image_tokens(self, image_tokens: torch.LongTensor, height: int, width: int):
         """
         Decodes generated image tokens from language model to continuous pixel values
@@ -966,13 +968,37 @@ class Emu3Model(Emu3PreTrainedModel):
         image = self.vqmodel.decode(image_tokens)
         return image
 
+    def get_placeholder_mask(
+        self, input_ids: torch.LongTensor, inputs_embeds: torch.FloatTensor, image_features: torch.FloatTensor
+    ):
+        """
+        Obtains multimodal placeholder mask from `input_ids` or `inputs_embeds`, and checks that the placeholder token count is
+        equal to the length of multimodal features. If the lengths are different, an error is raised.
+        """
+        if input_ids is None:
+            special_image_mask = inputs_embeds == self.get_input_embeddings()(
+                torch.tensor(self.vocabulary_mapping.image_token_id, dtype=torch.long, device=inputs_embeds.device)
+            )
+            special_image_mask = special_image_mask.all(-1)
+        else:
+            special_image_mask = input_ids == self.vocabulary_mapping.image_token_id
+
+        n_image_tokens = special_image_mask.sum()
+        special_image_mask = special_image_mask.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
+        n_image_features = image_features.shape[0] * image_features.shape[1]
+        if inputs_embeds[special_image_mask].numel() != image_features.numel():
+            raise ValueError(
+                f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}"
+            )
+        return special_image_mask
+
     @can_return_tuple
     @auto_docstring
     def forward(
         self,
-        input_ids: torch.LongTensor = None,
-        pixel_values: torch.FloatTensor = None,
-        image_sizes: torch.Tensor = None,
+        input_ids: Optional[torch.LongTensor] = None,
+        pixel_values: Optional[torch.FloatTensor] = None,
+        image_sizes: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
@@ -998,16 +1024,9 @@ class Emu3Model(Emu3PreTrainedModel):
         if pixel_values is not None:
             image_embeds = self.get_image_features(pixel_values, image_sizes)
             image_embeds = torch.cat(image_embeds, dim=0)
-
-            if input_ids is None:
-                special_image_mask = inputs_embeds == self.get_input_embeddings()(
-                    torch.tensor(self.vocabulary_mapping.image_token_id, dtype=torch.long, device=inputs_embeds.device)
-                )
-                special_image_mask = special_image_mask.all(-1)
-            else:
-                special_image_mask = input_ids == self.vocabulary_mapping.image_token_id
-
-            special_image_mask = special_image_mask.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
+            special_image_mask = self.get_placeholder_mask(
+                input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
+            )
             inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_embeds)
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
@@ -1026,13 +1045,13 @@ class Emu3Model(Emu3PreTrainedModel):
 
 class Emu3ForConditionalGeneration(Emu3PreTrainedModel, GenerationMixin):
     base_model_prefix = ""
-    _tied_weights_keys = ["lm_head.weight"]
+    output_modalities = ["image", "text"]
+    _tied_weights_keys = {"lm_head.weight": "model.text_model.embed_tokens.weight"}
     _checkpoint_conversion_mapping = {
         "^text_model.model": "model.text_model",
         "^vqmodel": "model.vqmodel",
         "^text_model.lm_head": "lm_head",
     }
-    _supports_static_cache = False  # `get_image_tokens()`, called when `pixel_values` is passed, is not compileable
 
     def __init__(self, config):
         super().__init__(config)
@@ -1056,7 +1075,7 @@ class Emu3ForConditionalGeneration(Emu3PreTrainedModel, GenerationMixin):
     def get_decoder(self):
         return self.model.get_decoder()
 
-    # Make modules available throught conditional class for BC
+    # Make modules available through conditional class for BC
     @property
     def text_model(self):
         return self.model.text_model
@@ -1076,9 +1095,9 @@ class Emu3ForConditionalGeneration(Emu3PreTrainedModel, GenerationMixin):
     @auto_docstring
     def forward(
         self,
-        input_ids: torch.LongTensor = None,
-        pixel_values: torch.FloatTensor = None,
-        image_sizes: torch.Tensor = None,
+        input_ids: Optional[torch.LongTensor] = None,
+        pixel_values: Optional[torch.FloatTensor] = None,
+        image_sizes: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
@@ -1107,7 +1126,7 @@ class Emu3ForConditionalGeneration(Emu3PreTrainedModel, GenerationMixin):
         >>> import requests
         >>> from PIL import Image
 
-        >>> model = Emu3ForConditionalGeneration.from_pretrained("BAAI/Emu3-Chat-hf", torch_dtype=torch.bfloat16)
+        >>> model = Emu3ForConditionalGeneration.from_pretrained("BAAI/Emu3-Chat-hf", dtype=torch.bfloat16)
         >>> processor = Emu3Processor.from_pretrained("BAAI/Emu3-Chat-hf")
 
         >>> conversation = [

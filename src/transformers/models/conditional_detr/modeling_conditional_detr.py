@@ -21,6 +21,7 @@ from typing import Optional, Union
 import torch
 from torch import Tensor, nn
 
+from ... import initialization as init
 from ...activations import ACT2FN
 from ...modeling_attn_mask_utils import _prepare_4d_attention_mask
 from ...modeling_layers import GradientCheckpointingLayer
@@ -236,11 +237,11 @@ def replace_batch_norm(model):
         if isinstance(module, nn.BatchNorm2d):
             new_module = ConditionalDetrFrozenBatchNorm2d(module.num_features)
 
-            if not module.weight.device == torch.device("meta"):
-                new_module.weight.data.copy_(module.weight)
-                new_module.bias.data.copy_(module.bias)
-                new_module.running_mean.data.copy_(module.running_mean)
-                new_module.running_var.data.copy_(module.running_var)
+            if module.weight.device != torch.device("meta"):
+                new_module.weight.copy_(module.weight)
+                new_module.bias.copy_(module.bias)
+                new_module.running_mean.copy_(module.running_mean)
+                new_module.running_var.copy_(module.running_var)
 
             model._modules[name] = new_module
 
@@ -431,7 +432,7 @@ def gen_sine_position_embeddings(pos_tensor, d_model):
     pos_x = torch.stack((pos_x[:, :, 0::2].sin(), pos_x[:, :, 1::2].cos()), dim=3).flatten(2)
     pos_y = torch.stack((pos_y[:, :, 0::2].sin(), pos_y[:, :, 1::2].cos()), dim=3).flatten(2)
     pos = torch.cat((pos_y, pos_x), dim=2)
-    return pos
+    return pos.to(pos_tensor.dtype)
 
 
 def inverse_sigmoid(x, eps=1e-5):
@@ -536,6 +537,10 @@ class DetrAttention(nn.Module):
                 raise ValueError(
                     f"Attention mask should be of size {(batch_size, 1, target_len, source_len)}, but is"
                     f" {attention_mask.size()}"
+                )
+            if attention_mask.dtype == torch.bool:
+                attention_mask = torch.zeros_like(attention_mask, dtype=attn_weights.dtype).masked_fill_(
+                    attention_mask, -torch.inf
                 )
             attn_weights = attn_weights.view(batch_size, self.num_heads, target_len, source_len) + attention_mask
             attn_weights = attn_weights.view(batch_size * self.num_heads, target_len, source_len)
@@ -653,6 +658,10 @@ class ConditionalDetrAttention(nn.Module):
                 raise ValueError(
                     f"Attention mask should be of size {(batch_size, 1, target_len, source_len)}, but is"
                     f" {attention_mask.size()}"
+                )
+            if attention_mask.dtype == torch.bool:
+                attention_mask = torch.zeros_like(attention_mask, dtype=attn_weights.dtype).masked_fill_(
+                    attention_mask, -torch.inf
                 )
             attn_weights = attn_weights.view(batch_size, self.num_heads, target_len, source_len) + attention_mask
             attn_weights = attn_weights.view(batch_size * self.num_heads, target_len, source_len)
@@ -959,30 +968,31 @@ class ConditionalDetrPreTrainedModel(PreTrainedModel):
     config: ConditionalDetrConfig
     base_model_prefix = "model"
     main_input_name = "pixel_values"
+    input_modalities = "image"
     _no_split_modules = [r"ConditionalDetrConvEncoder", r"ConditionalDetrEncoderLayer", r"ConditionalDetrDecoderLayer"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
         std = self.config.init_std
         xavier_std = self.config.init_xavier_std
 
         if isinstance(module, ConditionalDetrMHAttentionMap):
-            nn.init.zeros_(module.k_linear.bias)
-            nn.init.zeros_(module.q_linear.bias)
-            nn.init.xavier_uniform_(module.k_linear.weight, gain=xavier_std)
-            nn.init.xavier_uniform_(module.q_linear.weight, gain=xavier_std)
+            init.zeros_(module.k_linear.bias)
+            init.zeros_(module.q_linear.bias)
+            init.xavier_uniform_(module.k_linear.weight, gain=xavier_std)
+            init.xavier_uniform_(module.q_linear.weight, gain=xavier_std)
         elif isinstance(module, ConditionalDetrLearnedPositionEmbedding):
-            nn.init.uniform_(module.row_embeddings.weight)
-            nn.init.uniform_(module.column_embeddings.weight)
+            init.uniform_(module.row_embeddings.weight)
+            init.uniform_(module.column_embeddings.weight)
         if isinstance(module, (nn.Linear, nn.Conv2d, nn.BatchNorm2d)):
-            # Slightly different from the TF version which uses truncated_normal for initialization
-            # cf https://github.com/pytorch/pytorch/pull/5617
-            module.weight.data.normal_(mean=0.0, std=std)
+            init.normal_(module.weight, mean=0.0, std=std)
             if module.bias is not None:
-                module.bias.data.zero_()
+                init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
+            init.normal_(module.weight, mean=0.0, std=std)
+            # Here we need the check explicitly, as we slice the weight in the `zeros_` call, so it looses the flag
+            if module.padding_idx is not None and not getattr(module.weight, "_is_hf_initialized", False):
+                init.zeros_(module.weight[module.padding_idx])
 
 
 # Copied from transformers.models.detr.modeling_detr.DetrEncoder with Detr->ConditionalDetr,DETR->ConditionalDETR
@@ -1317,9 +1327,6 @@ class ConditionalDetrModel(ConditionalDetrPreTrainedModel):
     def get_encoder(self):
         return self.encoder
 
-    def get_decoder(self):
-        return self.decoder
-
     def freeze_backbone(self):
         for name, param in self.backbone.conv_encoder.model.named_parameters():
             param.requires_grad_(False)
@@ -1509,11 +1516,7 @@ class ConditionalDetrForObjectDetection(ConditionalDetrPreTrainedModel):
         self.post_init()
 
     # taken from https://github.com/Atten4Vis/conditionalDETR/blob/master/models/conditional_detr.py
-    @torch.jit.unused
     def _set_aux_loss(self, outputs_class, outputs_coord):
-        # this is a workaround to make torchscript happy, as torchscript
-        # doesn't support dictionary with non-homogeneous values, such
-        # as a dict having both a Tensor and a list.
         return [{"logits": a, "pred_boxes": b} for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
 
     @auto_docstring
@@ -1909,8 +1912,8 @@ class ConditionalDetrMaskHeadSmallConv(nn.Module):
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_uniform_(m.weight, a=1)
-                nn.init.constant_(m.bias, 0)
+                init.kaiming_uniform_(m.weight, a=1)
+                init.constant_(m.bias, 0)
 
     def forward(self, x: Tensor, bbox_mask: Tensor, fpns: list[Tensor]):
         # here we concatenate x, the projected feature map, of shape (batch_size, d_model, height/32, width/32) with

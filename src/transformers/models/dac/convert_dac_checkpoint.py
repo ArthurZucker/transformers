@@ -16,6 +16,7 @@ import argparse
 import fnmatch
 import re
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -33,7 +34,7 @@ from transformers import (
 # python3 -m dac download --model_type 44khz # downloads the 44kHz variant
 # python3 -m dac download --model_type 24khz # downloads the 24kHz variant
 # python3 -m dac download --model_type 16khz # downloads the 16kHz variant
-# More informations: https://github.com/descriptinc/descript-audio-codec/tree/main
+# More information: https://github.com/descriptinc/descript-audio-codec/tree/main
 
 logging.set_verbosity_info()
 logger = logging.get_logger("transformers.models.dac")
@@ -240,6 +241,7 @@ def convert_checkpoint(
     config.upsampling_ratios = metadata["decoder_rates"]
     config.quantizer_dropout = float(metadata["quantizer_dropout"])
     config.sampling_rate = sample_rate
+    config.hop_length = int(np.prod(config.downsampling_ratios))
 
     model = DacModel(config)
     feature_extractor = DacFeatureExtractor()
@@ -272,7 +274,7 @@ if __name__ == "__main__":
         "--pytorch_dump_folder_path", required=True, default=None, type=str, help="Path to the output PyTorch model."
     )
     parser.add_argument(
-        "--push_to_hub", default=None, type=str, help="Where to upload the converted model on the 🤗 hub."
+        "--push_to_hub", default=None, type=str, help="Where to upload the converted model on the Hugging Face hub."
     )
     parser.add_argument("--sample_rate", default=None, type=str, help="Sample rate used by DacFeatureExtractor")
     args = parser.parse_args()

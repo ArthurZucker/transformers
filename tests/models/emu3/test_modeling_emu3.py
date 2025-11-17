@@ -19,9 +19,8 @@ import numpy as np
 import pytest
 import requests
 from huggingface_hub import hf_hub_download
-from parameterized import parameterized
 
-from transformers import Emu3Config, Emu3TextConfig, is_torch_available, is_vision_available, set_seed
+from transformers import BitsAndBytesConfig, Emu3Config, Emu3TextConfig, is_torch_available, is_vision_available
 from transformers.testing_utils import (
     Expectations,
     require_bitsandbytes,
@@ -48,7 +47,6 @@ if is_torch_available():
         Emu3ForConditionalGeneration,
         Emu3Model,
         Emu3Processor,
-        Emu3TextModel,
     )
 
 
@@ -89,7 +87,7 @@ class Emu3Text2TextModelTester:
 
     def prepare_config_and_inputs(self):
         input_ids = ids_tensor([self.batch_size, self.seq_length], self.vocab_size)
-        attention_mask = input_ids.ne(1).to(torch_device)
+        attention_mask = input_ids.ne(self.pad_token_id).to(torch_device)
 
         config = self.get_config()
 
@@ -132,9 +130,6 @@ class Emu3Text2TextModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTe
         if is_torch_available()
         else {}
     )
-    test_headmasking = False
-    test_pruning = False
-    fx_compatible = False
 
     def setUp(self):
         self.model_tester = Emu3Text2TextModelTester(self)
@@ -142,37 +137,6 @@ class Emu3Text2TextModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTe
 
     def test_config(self):
         self.config_tester.run_common_tests()
-
-    @parameterized.expand([("linear",), ("dynamic",)])
-    def test_model_rope_scaling(self, scaling_type):
-        config, _ = self.model_tester.prepare_config_and_inputs_for_common()
-        short_input = ids_tensor([1, 10], config.vocab_size)
-        long_input = ids_tensor([1, int(config.max_position_embeddings * 1.5)], config.vocab_size)
-
-        set_seed(42)  # Fixed seed at init time so the two models get the same random weights
-        original_model = Emu3TextModel(config)
-        original_model.to(torch_device)
-        original_model.eval()
-        original_short_output = original_model(short_input).last_hidden_state
-        original_long_output = original_model(long_input).last_hidden_state
-
-        set_seed(42)  # Fixed seed at init time so the two models get the same random weights
-        config.rope_scaling = {"type": scaling_type, "factor": 10.0}
-        scaled_model = Emu3TextModel(config)
-        scaled_model.to(torch_device)
-        scaled_model.eval()
-        scaled_short_output = scaled_model(short_input).last_hidden_state
-        scaled_long_output = scaled_model(long_input).last_hidden_state
-
-        # Dynamic scaling does not change the RoPE embeddings until it receives an input longer than the original
-        # maximum sequence length, so the outputs for the short input should match.
-        if scaling_type == "dynamic":
-            torch.testing.assert_close(original_short_output, scaled_short_output, rtol=1e-5, atol=1e-5)
-        else:
-            self.assertFalse(torch.allclose(original_short_output, scaled_short_output, atol=1e-5))
-
-        # The output should be different for long inputs
-        self.assertFalse(torch.allclose(original_long_output, scaled_long_output, atol=1e-5))
 
     @unittest.skip("Doesn't work, tensors are not almost same")  # TODO raushan fixme
     def test_custom_4d_attention_mask(self):
@@ -198,12 +162,12 @@ class Emu3Vision2TextModelTester:
         bos_token_id=1,
         eos_token_id=2,
         image_token_id=3,
-        image_size=30,
+        image_size=15,
         codebook_size=20,
         temporal_downsample_factor=1,
         base_channels=32,
-        vq_channel_multiplier=[1, 1],
-        image_seq_length=100,
+        vq_channel_multiplier=[1, 2, 1],
+        image_seq_length=12,
         vq_img_token_start_id=3,
     ):
         self.parent = parent
@@ -234,9 +198,9 @@ class Emu3Vision2TextModelTester:
         config = self.get_config()
 
         input_ids = ids_tensor([self.batch_size, self.seq_length], config.text_config.vocab_size)
-        attention_mask = input_ids.ne(1).to(torch_device)
         input_ids[input_ids == self.image_token_id] = self.pad_token_id
         input_ids[:, : self.image_seq_length] = self.image_token_id
+        attention_mask = input_ids.ne(self.pad_token_id).to(torch_device)
 
         pixel_values = floats_tensor(
             [
@@ -288,6 +252,7 @@ class Emu3Vision2TextModelTester:
             "base_channels": self.base_channels,
             "channel_multiplier": self.vq_channel_multiplier,
             "hidden_size": self.base_channels,
+            "attn_resolutions": [],
         }
         return Emu3Config(text_config=text_config, vq_config=vq_config, vocabulary_map=vocab_map)
 
@@ -320,9 +285,6 @@ class Emu3Vision2TextModelTest(ModelTesterMixin, GenerationTesterMixin, Pipeline
         else ()
     )
     pipeline_model_mapping = {}
-    test_headmasking = False
-    test_pruning = False
-    fx_compatible = False
 
     def setUp(self):
         self.model_tester = Emu3Vision2TextModelTester(self)
@@ -349,10 +311,6 @@ class Emu3Vision2TextModelTest(ModelTesterMixin, GenerationTesterMixin, Pipeline
     def test_cpu_offload(self):
         pass
 
-    @unittest.skip("VQ-VAE module doesn't initialize weights properly")
-    def test_initialization(self):
-        pass
-
     @pytest.mark.generate
     @unittest.skip("Emu3 has dynamic control flow in vision backbone")
     def test_generate_with_static_cache(self):
@@ -364,7 +322,9 @@ class Emu3IntegrationTest(unittest.TestCase):
     @slow
     @require_bitsandbytes
     def test_model_generation(self):
-        model = Emu3ForConditionalGeneration.from_pretrained("BAAI/Emu3-Chat-hf", load_in_4bit=True)
+        model = Emu3ForConditionalGeneration.from_pretrained(
+            "BAAI/Emu3-Chat-hf", quantization_config=BitsAndBytesConfig(load_in_4bit=True)
+        )
         processor = Emu3Processor.from_pretrained("BAAI/Emu3-Chat-hf")
 
         image = Image.open(requests.get("https://picsum.photos/id/237/200/200", stream=True).raw)
@@ -382,7 +342,9 @@ class Emu3IntegrationTest(unittest.TestCase):
     @require_bitsandbytes
     @require_torch_large_accelerator
     def test_model_generation_batched(self):
-        model = Emu3ForConditionalGeneration.from_pretrained("BAAI/Emu3-Chat-hf", load_in_4bit=True)
+        model = Emu3ForConditionalGeneration.from_pretrained(
+            "BAAI/Emu3-Chat-hf", quantization_config=BitsAndBytesConfig(load_in_4bit=True)
+        )
         processor = Emu3Processor.from_pretrained("BAAI/Emu3-Chat-hf")
         processor.tokenizer.padding_side = "left"
 
@@ -425,7 +387,9 @@ class Emu3IntegrationTest(unittest.TestCase):
     @require_bitsandbytes
     @require_torch_large_accelerator
     def test_model_generation_multi_image(self):
-        model = Emu3ForConditionalGeneration.from_pretrained("BAAI/Emu3-Chat-hf", load_in_4bit=True)
+        model = Emu3ForConditionalGeneration.from_pretrained(
+            "BAAI/Emu3-Chat-hf", quantization_config=BitsAndBytesConfig(load_in_4bit=True)
+        )
         processor = Emu3Processor.from_pretrained("BAAI/Emu3-Chat-hf")
 
         image = Image.open(requests.get("https://picsum.photos/id/237/50/50", stream=True).raw)
@@ -452,7 +416,9 @@ class Emu3IntegrationTest(unittest.TestCase):
     @require_bitsandbytes
     @require_torch_large_accelerator
     def test_model_generate_images(self):
-        model = Emu3ForConditionalGeneration.from_pretrained("BAAI/Emu3-Gen-hf", load_in_4bit=True)
+        model = Emu3ForConditionalGeneration.from_pretrained(
+            "BAAI/Emu3-Gen-hf", quantization_config=BitsAndBytesConfig(load_in_4bit=True)
+        )
         processor = Emu3Processor.from_pretrained("BAAI/Emu3-Gen-hf")
 
         inputs = processor(

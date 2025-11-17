@@ -371,7 +371,7 @@ if __name__ == "__main__":
                         file_path, test = line, line
 
                     job_result["failed"].append(test)
-                    failure = all_failures[test] if test in all_failures else "N/A"
+                    failure = all_failures.get(test, "N/A")
                     job_result["failures"][test] = failure
 
     # Save and to be uploaded as artifact
@@ -379,6 +379,6 @@ if __name__ == "__main__":
     with open("doc_test_results/doc_test_results.json", "w", encoding="UTF-8") as fp:
         json.dump(doc_test_results, fp, ensure_ascii=False, indent=4)
 
-    message = Message("🤗 Results of the doc tests.", doc_test_results)
+    message = Message("[INFO] Results of the doc tests.", doc_test_results)
     message.post()
     message.post_reply()

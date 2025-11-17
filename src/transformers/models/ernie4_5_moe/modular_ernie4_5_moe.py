@@ -19,31 +19,33 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from ... import initialization as init
+from ...activations import ACT2FN
 from ...cache_utils import Cache, DynamicCache
 from ...masking_utils import create_causal_mask
 from ...modeling_outputs import MoeModelOutputWithPast
+from ...modeling_utils import PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring, can_return_tuple, logging
-from ...utils.generic import check_model_inputs
+from ...utils.generic import OutputRecorder, check_model_inputs
 from ..ernie4_5.modeling_ernie4_5 import Ernie4_5RotaryEmbedding, apply_rotary_pos_emb, rotate_half  # noqa: F401
 from ..llama.modeling_llama import LlamaAttention, LlamaRMSNorm
 from ..mixtral.modeling_mixtral import (
     MixtralForCausalLM,
-    MixtralModel,
     MixtralPreTrainedModel,
 )
 from ..qwen3_moe.modeling_qwen3_moe import Qwen3MoeDecoderLayer, Qwen3MoeMLP
-from .configuration_ernie4_5_moe import Ernie4_5_MoEConfig
+from .configuration_ernie4_5_moe import Ernie4_5_MoeConfig
 
 
 logger = logging.get_logger(__name__)
 
 
-class Ernie4_5_MoERMSNorm(LlamaRMSNorm):
+class Ernie4_5_MoeRMSNorm(LlamaRMSNorm):
     pass
 
 
-class Ernie4_5_MoEMLP(Qwen3MoeMLP):
+class Ernie4_5_MoeMLP(Qwen3MoeMLP):
     def __init__(self, config, intermediate_size=None):
         super().__init__(config, intermediate_size)
 
@@ -52,12 +54,13 @@ class Ernie4_5_MoEMLP(Qwen3MoeMLP):
         self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=config.use_bias)
 
 
-class Ernie4_5_MoERotaryEmbedding(Ernie4_5RotaryEmbedding):
-    pass
+class Ernie4_5_MoeRotaryEmbedding(Ernie4_5RotaryEmbedding):
+    def __init__(self, config: Ernie4_5_MoeConfig, device=None):
+        super().__init__(config, device)
 
 
-class Ernie4_5_MoEAttention(LlamaAttention):
-    def __init__(self, config: Ernie4_5_MoEConfig, layer_idx: int):
+class Ernie4_5_MoeAttention(LlamaAttention):
+    def __init__(self, config: Ernie4_5_MoeConfig, layer_idx: int):
         super().__init__(config, layer_idx)
 
         self.attention_dropout = 0.0
@@ -68,7 +71,7 @@ class Ernie4_5_MoEAttention(LlamaAttention):
         self.o_proj = nn.Linear(config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.use_bias)
 
 
-class Ernie4_5_MoEStatics(nn.Module):
+class Ernie4_5_MoeStatics(nn.Module):
     """
     Stores MoE (Mixture of Experts) statistics
         - Bias for the gating
@@ -95,137 +98,171 @@ class Ernie4_5_MoEStatics(nn.Module):
         return hidden_states + self.e_score_correction_bias.squeeze()
 
 
-class Ernie4_5_MoESparseMoeBlock(nn.Module):
-    """
-    This implementation is
-    strictly equivalent to standard MoE with full capacity (no
-    dropped tokens). It's faster since it formulates MoE operations
-    in terms of block-sparse operations to accommodate imbalanced
-    assignments of tokens to experts, whereas standard MoE either
-    (1) drop tokens at the cost of reduced performance or (2) set
-    capacity factor to number of experts and thus waste computation
-    and memory on padding.
-
-    Ernie 4.5 MoE's original formula is based on case (2) with
-    (optional) shared experts and a corrections bias during gating.
-    """
-
+class Ernie4_5_MoeExperts(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.num_experts = config.moe_num_experts
-        self.top_k = config.moe_k
+        self.hidden_dim = config.hidden_size
+        self.intermediate_dim = config.moe_intermediate_size
+        self.use_bias = config.use_bias
+        self.act_fn = ACT2FN[config.hidden_act]
 
-        # correction bias (yes it seems to be a typo with statics <> statistics)
-        self.moe_statics = Ernie4_5_MoEStatics(config)
-
-        # gating
-        self.gate = nn.Linear(config.hidden_size, config.moe_num_experts, bias=False, dtype=torch.float32)
-        self.experts = nn.ModuleList(
-            [Ernie4_5_MoEMLP(config, config.moe_intermediate_size) for _ in range(config.moe_num_experts)]
-        )
-        self.norm_min = config.moe_norm_min
-
-        # (optional) shared experts for all forwards
-        self.shared_experts = None
-        if config.moe_num_shared_experts > 0:
-            self.shared_experts = Ernie4_5_MoEMLP(config, config.moe_intermediate_size * config.moe_num_shared_experts)
+        self.gate_up_proj = nn.Parameter(torch.zeros(self.num_experts, 2 * self.intermediate_dim, self.hidden_dim))
+        self.down_proj = nn.Parameter(torch.zeros(self.num_experts, self.hidden_dim, self.intermediate_dim))
+        if self.use_bias:
+            self.gate_up_proj_bias = nn.Parameter(torch.zeros(self.num_experts, 2 * self.intermediate_dim))
+            self.down_proj_bias = nn.Parameter(torch.zeros(self.num_experts, self.hidden_dim))
+        else:
+            self.gate_up_proj_bias = None
+            self.down_proj_bias = None
 
     def forward(
-        self,
-        hidden_states: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        batch_size, sequence_length, hidden_dim = hidden_states.shape
-        hidden_states = hidden_states.view(-1, hidden_dim)
+        self, hidden_states: torch.Tensor, selected_experts: torch.Tensor, routing_weights: torch.Tensor
+    ) -> torch.Tensor:
+        final_hidden_states = torch.zeros_like(hidden_states)
+        if selected_experts.numel() == 0:
+            return final_hidden_states
 
-        # (Optional) shared experts
-        if self.shared_experts is not None:
-            shared_output = self.shared_experts(hidden_states)
+        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
 
+        expert_hit = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero()
+        for expert_idx in expert_hit:
+            expert_idx = int(expert_idx.item())
+            idx, top_x = torch.where(expert_mask[expert_idx].squeeze(0))
+            current_state = hidden_states[None, top_x].reshape(-1, hidden_states.shape[-1])
+            gate_inputs = F.linear(
+                current_state,
+                self.gate_up_proj[expert_idx],
+                None if self.gate_up_proj_bias is None else self.gate_up_proj_bias[expert_idx],
+            )
+            gate, up = gate_inputs.chunk(2, dim=-1)
+            current_hidden_states = self.act_fn(gate) * up
+            current_hidden_states = F.linear(
+                current_hidden_states,
+                self.down_proj[expert_idx],
+                None if self.down_proj_bias is None else self.down_proj_bias[expert_idx],
+            )
+            current_hidden_states = current_hidden_states * routing_weights[top_x, idx, None]
+            final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
+        return final_hidden_states
+
+
+class Ernie4_5_MoeTopKRouter(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.weight = nn.Parameter(torch.zeros(config.moe_num_experts, config.hidden_size, dtype=torch.float32))
+        self.moe_statics = Ernie4_5_MoeStatics(config)
+        self.top_k = config.moe_k
+        self.norm_min = config.moe_norm_min
+
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         device_type = (
             hidden_states.device.type
             if isinstance(hidden_states.device.type, str) and hidden_states.device.type != "mps"
             else "cpu"
         )
-        with torch.autocast(device_type=device_type, enabled=False):  # Force float32
-            # router_logits: (batch * sequence_length, n_experts)
-            router_logits = self.gate(hidden_states.float())
 
-            # NOTE: we are using the original code base at
-            # https://github.com/PaddlePaddle/Paddle/blob/9b40438ce0f6d76b4f08a7837dd1e28b26cf8ee6/python/paddle/incubate/nn/functional/moe_gate_dispatch.py#L109-L116
-            # this might differ from the remote version regarding the bias (see `Ernie4_5_MoEStatics`)
+        with torch.autocast(device_type=device_type, enabled=False):  # Force float32
+            router_logits = F.linear(hidden_states.float(), self.weight)
             routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
-            routing_weights = self.moe_statics(routing_weights)
-            routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
+            _, selected_experts = torch.topk(self.moe_statics(routing_weights), self.top_k, dim=-1)
+            routing_weights = torch.gather(routing_weights, dim=-1, index=selected_experts)
             routing_weights = routing_weights / torch.clamp(
                 routing_weights.sum(dim=-1, keepdim=True), min=self.norm_min
             )
-            routing_weights = routing_weights.to(hidden_states.dtype)
+        routing_weights = routing_weights.to(router_logits.dtype)
+        return routing_weights, selected_experts
 
-        final_hidden_states = torch.zeros(
-            (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device
-        )
 
-        # One hot encode the selected experts to create an expert mask
-        # this will be used to easily index which expert is going to be sollicitated
-        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
+class Ernie4_5_MoeSparseMoeBlock(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.hidden_dim = config.hidden_size
+        self.num_experts = config.moe_num_experts
+        self.top_k = config.moe_k
+        self.gate = Ernie4_5_MoeTopKRouter(config)
+        self.experts = Ernie4_5_MoeExperts(config)
 
-        # Loop over all available experts in the model and perform the computation on each expert
-        expert_hitted = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero()
-        for expert_idx in expert_hitted:
-            expert_layer = self.experts[expert_idx]
-            idx, top_x = torch.where(expert_mask[expert_idx].squeeze(0))
+        self.shared_experts = None
+        if config.moe_num_shared_experts > 0:
+            self.shared_experts = Ernie4_5_MoeMLP(config, config.moe_intermediate_size * config.moe_num_shared_experts)
 
-            # Index the correct hidden states and compute the expert hidden state for
-            # the current expert. We need to make sure to multiply the output hidden
-            # states by `routing_weights` on the corresponding tokens (top-1 and top-2)
-            current_state = hidden_states[None, top_x].reshape(-1, hidden_dim)
-            current_hidden_states = expert_layer(current_state) * routing_weights[top_x, idx, None]
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        batch_size, sequence_length, _ = hidden_states.shape
+        hidden_states = hidden_states.view(-1, self.hidden_dim)
 
-            # However `index_add_` only support torch tensors for indexing so we'll use
-            # the `top_x` tensor here.
-            final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
+        if self.shared_experts is not None:
+            shared_output = self.shared_experts(hidden_states)
 
-        # Add (optional) shared experts to the result
+        routing_weights, selected_experts = self.gate(hidden_states)
+        final_hidden_states = self.experts(hidden_states, selected_experts, routing_weights)
+
         if self.shared_experts is not None:
             final_hidden_states = final_hidden_states + shared_output
 
-        final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-        return final_hidden_states, router_logits
+        final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, self.hidden_dim)
+        return final_hidden_states.to(hidden_states.dtype)
 
 
-class Ernie4_5_MoEDecoderLayer(Qwen3MoeDecoderLayer, nn.Module):
+class Ernie4_5_MoeDecoderLayer(Qwen3MoeDecoderLayer):
     def __init__(self, config, layer_idx):
-        nn.Module().__init__()
+        nn.Module.__init__(self)
         self.hidden_size = config.hidden_size
 
-        self.self_attn = Ernie4_5_MoEAttention(config, layer_idx)
+        self.self_attn = Ernie4_5_MoeAttention(config, layer_idx)
 
         if (
             ((layer_idx + 1) % config.moe_layer_interval == 0)
             and layer_idx >= config.moe_layer_start_index
             and layer_idx <= config.moe_layer_end_index
         ):
-            self.mlp = Ernie4_5_MoESparseMoeBlock(config)
+            self.mlp = Ernie4_5_MoeSparseMoeBlock(config)
         else:
-            self.mlp = Ernie4_5_MoEMLP(config)
+            self.mlp = Ernie4_5_MoeMLP(config)
 
-        self.input_layernorm = Ernie4_5_MoERMSNorm(config.hidden_size, config.rms_norm_eps)
-        self.post_attention_layernorm = Ernie4_5_MoERMSNorm(config.hidden_size, config.rms_norm_eps)
+        self.input_layernorm = Ernie4_5_MoeRMSNorm(config.hidden_size, config.rms_norm_eps)
+        self.post_attention_layernorm = Ernie4_5_MoeRMSNorm(config.hidden_size, config.rms_norm_eps)
 
 
 @auto_docstring
-class Ernie4_5_MoEPreTrainedModel(MixtralPreTrainedModel):
-    _keep_in_fp32_modules_strict = ["gate", "moe_statics"]
+class Ernie4_5_MoePreTrainedModel(MixtralPreTrainedModel):
+    config: Ernie4_5_MoeConfig
+    _no_split_modules = ["Ernie4_5_MoeDecoderLayer"]
+    # Not supporting multi-token prediction (MTP) atm
+    _keys_to_ignore_on_load_unexpected = ["mtp"]
+    _can_record_outputs = {
+        "router_logits": OutputRecorder(Ernie4_5_MoeTopKRouter, layer_name="mlp.gate", index=0),
+        "hidden_states": Ernie4_5_MoeDecoderLayer,
+        "attentions": Ernie4_5_MoeAttention,
+    }
+    _keep_in_fp32_modules_strict = ["gate.weight", "moe_statics"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
-        MixtralPreTrainedModel._init_weights(module)
-        if isinstance(module, Ernie4_5_MoEStatics):
-            module.e_score_correction_bias.data.zero_()
+        PreTrainedModel._init_weights(self, module)
+        if isinstance(module, Ernie4_5_MoeStatics):
+            init.zeros_(module.e_score_correction_bias)
 
 
 @auto_docstring
-class Ernie4_5_MoEModel(MixtralModel):
-    @check_model_inputs
+class Ernie4_5_MoeModel(Ernie4_5_MoePreTrainedModel):
+    def __init__(self, config: Ernie4_5_MoeConfig):
+        super().__init__(config)
+        self.padding_idx = config.pad_token_id
+        self.vocab_size = config.vocab_size
+
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.layers = nn.ModuleList(
+            [Ernie4_5_MoeDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+        )
+        self.norm = Ernie4_5_MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.rotary_emb = Ernie4_5_MoeRotaryEmbedding(config=config)
+        self.gradient_checkpointing = False
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    @check_model_inputs()
     @auto_docstring
     def forward(
         self,
@@ -242,7 +279,7 @@ class Ernie4_5_MoEModel(MixtralModel):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
         if use_cache and past_key_values is None:
-            past_key_values = DynamicCache()
+            past_key_values = DynamicCache(config=self.config)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -275,7 +312,7 @@ class Ernie4_5_MoEModel(MixtralModel):
                 position_embeddings=position_embeddings,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
-                past_key_value=past_key_values,
+                past_key_values=past_key_values,
                 use_cache=use_cache,
                 cache_position=cache_position,
                 **kwargs,
@@ -290,10 +327,10 @@ class Ernie4_5_MoEModel(MixtralModel):
 
 
 @auto_docstring
-class Ernie4_5_MoEForCausalLM(MixtralForCausalLM, Ernie4_5_MoEPreTrainedModel):
+class Ernie4_5_MoeForCausalLM(MixtralForCausalLM):
     def __init__(self, config):
-        Ernie4_5_MoEPreTrainedModel().__init__(config)
-        self.model = Ernie4_5_MoEModel(config)
+        PreTrainedModel.__init__(self, config)
+        self.model = Ernie4_5_MoeModel(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=config.use_bias)
 
@@ -317,7 +354,7 @@ class Ernie4_5_MoEForCausalLM(MixtralForCausalLM, Ernie4_5_MoEPreTrainedModel):
 
 
 __all__ = [
-    "Ernie4_5_MoEForCausalLM",
-    "Ernie4_5_MoEModel",
-    "Ernie4_5_MoEPreTrainedModel",
+    "Ernie4_5_MoeForCausalLM",
+    "Ernie4_5_MoeModel",
+    "Ernie4_5_MoePreTrainedModel",
 ]

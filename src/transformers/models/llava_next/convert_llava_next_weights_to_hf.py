@@ -127,7 +127,7 @@ def convert_llava_to_hf(model_id, pytorch_dump_folder_path, push_to_hub=False):
     torch.set_default_dtype(torch.float16)
     text_config = AutoConfig.from_pretrained(text_model_id)
 
-    use_fast = False if model_id == "liuhaotian/llava-v1.6-34b" else True
+    use_fast = model_id != "liuhaotian/llava-v1.6-34b"
     tokenizer = AutoTokenizer.from_pretrained(text_model_id, use_fast=use_fast)
     tokenizer.add_tokens(AddedToken("<image>", special=True, normalized=False), special_tokens=True)
 
@@ -387,7 +387,9 @@ if __name__ == "__main__":
         "--pytorch_dump_folder_path", type=str, required=True, help="Path to the output PyTorch model directory."
     )
     parser.add_argument(
-        "--push_to_hub", action="store_true", help="Whether or not to push the converted model to the 🤗 hub."
+        "--push_to_hub",
+        action="store_true",
+        help="Whether or not to push the converted model to the Hugging Face hub.",
     )
     args = parser.parse_args()
 

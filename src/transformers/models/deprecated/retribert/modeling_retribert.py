@@ -40,22 +40,7 @@ class RetriBertPreTrainedModel(PreTrainedModel):
     """
 
     config: RetriBertConfig
-    load_tf_weights = None
     base_model_prefix = "retribert"
-
-    def _init_weights(self, module):
-        """Initialize the weights"""
-        if isinstance(module, nn.Linear):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
 
 
 RETRIBERT_START_DOCSTRING = r"""
@@ -110,7 +95,6 @@ class RetriBertModel(RetriBertPreTrainedModel):
             device = input_ids.device
             input_shape = input_ids.size()
             token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
-            head_mask = [None] * sent_encoder.config.num_hidden_layers
             extended_attention_mask: torch.Tensor = sent_encoder.get_extended_attention_mask(
                 attention_mask, input_shape
             )
@@ -120,7 +104,6 @@ class RetriBertModel(RetriBertPreTrainedModel):
                 encoder_outputs = sent_encoder.encoder(
                     inputs[0],
                     attention_mask=inputs[1],
-                    head_mask=head_mask,
                 )
                 sequence_output = encoder_outputs[0]
                 pooled_output = sent_encoder.pooler(sequence_output)

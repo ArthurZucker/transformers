@@ -18,9 +18,9 @@ import math
 from typing import Optional, Union
 
 import torch
-import torch.utils.checkpoint
 from torch import nn
 
+from .... import initialization as init
 from ....activations import ACT2FN
 from ....file_utils import add_code_sample_docstrings, add_start_docstrings, add_start_docstrings_to_model_forward
 from ....integrations.deepspeed import is_deepspeed_zero3_enabled
@@ -28,12 +28,8 @@ from ....integrations.fsdp import is_fsdp_managed_module
 from ....modeling_attn_mask_utils import _prepare_4d_attention_mask
 from ....modeling_layers import GradientCheckpointingLayer
 from ....modeling_outputs import BaseModelOutput, CausalLMOutput
-from ....modeling_utils import (
-    PreTrainedModel,
-    apply_chunking_to_forward,
-    find_pruneable_heads_and_indices,
-    prune_linear_layer,
-)
+from ....modeling_utils import PreTrainedModel
+from ....pytorch_utils import apply_chunking_to_forward
 from ....utils import logging
 from .configuration_mctct import MCTCTConfig
 
@@ -101,7 +97,7 @@ class MCTCTConv1dSubsampler(nn.Module):
     def forward(self, input_features):
         # NOTE: in reference to the NOTE in __init__, right now it just calculates padding as if
         # there will be just one conv layer.
-        padding = sum([size // 2 for size in self.kernel_size])  # (7, 7) -> (3, 3)
+        padding = sum(size // 2 for size in self.kernel_size)  # (7, 7) -> (3, 3)
 
         input_features = torch.nn.functional.pad(input_features, (0, 0, padding, padding), "constant", 0)
         hidden_states = input_features.transpose(1, 2).contiguous()  # -> Batch x Frame x Time
@@ -123,8 +119,6 @@ class MCTCTEmbeddings(nn.Module):
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
 
-        # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
-        # any TensorFlow checkpoint file
         # self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.LayerNorm = MCTCTLayerNorm()
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
@@ -235,7 +229,6 @@ class MCTCTSelfAttention(nn.Module):
         self,
         hidden_states,
         attention_mask=None,
-        head_mask=None,
         output_attentions=False,
     ):
         mixed_query_layer = self.query(hidden_states)
@@ -266,10 +259,6 @@ class MCTCTSelfAttention(nn.Module):
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
         attention_probs = self.dropout(attention_probs)
-
-        # Mask heads if we want to
-        if head_mask is not None:
-            attention_probs = attention_probs * head_mask
 
         context_layer = torch.matmul(attention_probs, value_layer)
 
@@ -310,37 +299,16 @@ class MCTCTAttention(nn.Module):
         super().__init__()
         self.self = MCTCTSelfAttention(config)
         self.output = MCTCTSelfOutput(config)
-        self.pruned_heads = set()
-
-    def prune_heads(self, heads):
-        if len(heads) == 0:
-            return
-        heads, index = find_pruneable_heads_and_indices(
-            heads, self.self.num_attention_heads, self.self.attention_head_size, self.pruned_heads
-        )
-
-        # Prune linear layers
-        self.self.query = prune_linear_layer(self.self.query, index)
-        self.self.key = prune_linear_layer(self.self.key, index)
-        self.self.value = prune_linear_layer(self.self.value, index)
-        self.output.dense = prune_linear_layer(self.output.dense, index, dim=1)
-
-        # Update hyper params and store pruned heads
-        self.self.num_attention_heads = self.self.num_attention_heads - len(heads)
-        self.self.all_head_size = self.self.attention_head_size * self.self.num_attention_heads
-        self.pruned_heads = self.pruned_heads.union(heads)
 
     def forward(
         self,
         hidden_states,
         attention_mask=None,
-        head_mask=None,
         output_attentions=False,
     ):
         self_outputs = self.self(
             hidden_states,
             attention_mask,
-            head_mask,
             output_attentions,
         )
         attention_output = self.output(self_outputs[0], hidden_states)
@@ -394,12 +362,9 @@ class MCTCTLayer(GradientCheckpointingLayer):
         self,
         hidden_states,
         attention_mask=None,
-        head_mask=None,
         output_attentions=False,
     ):
-        self_attention_outputs = self.attention(
-            hidden_states, attention_mask, head_mask, output_attentions=output_attentions
-        )
+        self_attention_outputs = self.attention(hidden_states, attention_mask, output_attentions=output_attentions)
         attention_output = self_attention_outputs[0]
         outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
 
@@ -428,29 +393,13 @@ class MCTCTPreTrainedModel(PreTrainedModel):
     main_input_name = "input_features"
     supports_gradient_checkpointing = True
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights"""
-        std = self.config.initializer_range
-        if isinstance(module, nn.Linear):
-            # Slightly different from the TF version which uses truncated_normal for initialization
-            # cf https://github.com/pytorch/pytorch/pull/5617
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-        elif isinstance(module, MCTCTLayerNorm):
-            module.singleton_weight.data.fill_(1.0)
-            module.singleton_bias.data.zero_()
-        if isinstance(module, (nn.Linear, nn.Conv1d)):
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.bias is not None:
-                module.bias.data.zero_()
+        super()._init_weights(module)
+        if isinstance(module, MCTCTLayerNorm):
+            init.ones_(module.singleton_weight)
+            init.zeros_(module.singleton_bias)
 
     def _get_feat_extract_output_lengths(self, input_lengths: torch.LongTensor):
         """
@@ -513,11 +462,6 @@ MCTCT_INPUTS_DOCSTRING = r"""
             - 0 for tokens that are **masked**.
 
             [What are attention masks?](../glossary#attention-mask)
-        head_mask (`torch.FloatTensor` of shape `(num_heads,)` or `(num_layers, num_heads)`, *optional*):
-            Mask to nullify selected heads of the self-attention modules. Mask values selected in `[0, 1]`:
-
-            - 1 indicates the head is **not masked**,
-            - 0 indicates the head is **masked**.
         output_attentions (`bool`, *optional*):
             Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
             tensors for more detail.
@@ -544,7 +488,6 @@ class MCTCTEncoder(MCTCTPreTrainedModel):
         self,
         input_features: torch.Tensor,
         attention_mask: torch.Tensor,
-        head_mask: torch.Tensor,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
@@ -573,14 +516,6 @@ class MCTCTEncoder(MCTCTPreTrainedModel):
         encoder_states = () if output_hidden_states else None
         all_attentions = () if output_attentions else None
 
-        # check if head_mask has a correct number of layers specified if desired
-        if head_mask is not None:
-            if head_mask.size()[0] != len(self.layers):
-                raise ValueError(
-                    f"The head_mask should be specified for {len(self.layers)} layers, "
-                    f"but it is for {head_mask.size()[0]}."
-                )
-
         synced_gpus = is_deepspeed_zero3_enabled() or is_fsdp_managed_module(self)
         for idx, encoder_layer in enumerate(self.layers):
             if output_hidden_states:
@@ -589,7 +524,7 @@ class MCTCTEncoder(MCTCTPreTrainedModel):
             # add LayerDrop (see https://huggingface.co/papers/1909.11556 for description)
             dropout_probability = torch.rand([])
 
-            skip_the_layer = True if self.training and (dropout_probability < self.config.layerdrop) else False
+            skip_the_layer = self.training and dropout_probability < self.config.layerdrop
             if not skip_the_layer or synced_gpus:
                 # under fsdp or deepspeed zero3 all gpus must run in sync
                 layer_outputs = encoder_layer(
@@ -642,7 +577,6 @@ class MCTCTModel(MCTCTPreTrainedModel):
         self,
         input_features: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
@@ -659,7 +593,6 @@ class MCTCTModel(MCTCTPreTrainedModel):
         encoder_outputs = self.encoder(
             input_features,
             attention_mask=attention_mask,
-            head_mask=head_mask,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
@@ -712,7 +645,6 @@ class MCTCTForCTC(MCTCTPreTrainedModel):
         self,
         input_features: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
@@ -732,7 +664,6 @@ class MCTCTForCTC(MCTCTPreTrainedModel):
         outputs = self.mctct(
             input_features,
             attention_mask=attention_mask,
-            head_mask=head_mask,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,

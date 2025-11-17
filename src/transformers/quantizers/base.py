@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from ..utils import is_torch_available
+from ..utils import is_accelerate_available, is_torch_available, logging
 from ..utils.quantization_config import QuantizationConfigMixin, QuantizationMethod
 from .quantizers_utils import get_module_from_name
 
+
+if is_accelerate_available():
+    from accelerate.utils import find_tied_parameters
 
 if TYPE_CHECKING:
     from ..modeling_utils import PreTrainedModel
@@ -27,6 +31,64 @@ if is_torch_available():
     from torch.nn import ModuleList
 else:
     ModuleList = str
+
+logger = logging.get_logger(__file__)
+
+
+def _assign_original_dtype(module, original_dtype):
+    # not very nice in a recursive function but it avoids a circular import
+    from ..modeling_utils import PreTrainedModel
+
+    for child in module.children():
+        if isinstance(child, PreTrainedModel):
+            child.config._pre_quantization_dtype = original_dtype
+        _assign_original_dtype(child, original_dtype)
+
+
+def get_keys_to_not_convert(model):
+    r"""
+    An utility function to get the key of the module to keep in full precision if any For example for CausalLM modules
+    we may want to keep the lm_head in full precision for numerical stability reasons. For other architectures, we want
+    to keep the tied weights of the model. The function will return a list of the keys of the modules to not convert in
+    int8.
+
+    Parameters:
+    model (`torch.nn.Module`):
+        Input model
+    """
+    # Create a copy of the model and tie the weights, then
+    # check if it contains tied weights
+    tied_model = deepcopy(model)  # this has 0 cost since it is done inside `init_empty_weights` context manager`
+    tied_model.tie_weights()
+
+    tied_params = find_tied_parameters(tied_model)
+    tied_keys = sum(tied_params, [])
+    has_tied_params = len(tied_keys) > 0
+
+    # If there is not tied weights, we want to keep the lm_head（output_embedding) in full precision
+    if not has_tied_params:
+        output_emb = model.get_output_embeddings()
+        if output_emb is not None:
+            list_last_module = [name for name, module in model.named_modules() if id(module) == id(output_emb)]
+            return list_last_module
+
+    # otherwise, no tied weights, no output embedding defined, simply keep the last module in full precision
+    list_modules = list(model.named_parameters())
+    list_last_module = [list_modules[-1][0]]
+    # add last module together with tied weights
+    intersection = set(list_last_module) - set(tied_keys)
+    list_untouched = list(set(tied_keys)) + list(intersection)
+
+    # remove ".weight" from the keys
+    names_to_remove = [".weight", ".bias"]
+    filtered_module_names = []
+    for name in list_untouched:
+        for name_to_remove in names_to_remove:
+            if name_to_remove in name:
+                name = name.replace(name_to_remove, "")
+        filtered_module_names.append(name)
+
+    return filtered_module_names
 
 
 class HfQuantizer(ABC):
@@ -67,17 +129,17 @@ class HfQuantizer(ABC):
                 f"pass `pre_quantized=True` while knowing what you are doing."
             )
 
-    def update_torch_dtype(self, torch_dtype: "torch.dtype") -> "torch.dtype":
+    def update_dtype(self, dtype: "torch.dtype") -> "torch.dtype":
         """
         Some quantization methods require to explicitly set the dtype of the model to a
         target dtype. You need to override this method in case you want to make sure that behavior is
         preserved
 
         Args:
-            torch_dtype (`torch.dtype`):
+            dtype (`torch.dtype`):
                 The input dtype that is passed in `from_pretrained`
         """
-        return torch_dtype
+        return dtype
 
     def update_device_map(self, device_map: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
         """
@@ -91,42 +153,37 @@ class HfQuantizer(ABC):
         """
         return device_map
 
-    def adjust_target_dtype(self, torch_dtype: "torch.dtype") -> "torch.dtype":
+    def adjust_target_dtype(self, dtype: "torch.dtype") -> "torch.dtype":
         """
         Override this method if you want to adjust the `target_dtype` variable used in `from_pretrained`
         to compute the device_map in case the device_map is a `str`. E.g. for bitsandbytes we force-set `target_dtype`
         to `torch.int8` and for 4-bit we pass a custom enum `accelerate.CustomDtype.int4`.
 
         Args:
-            torch_dtype (`torch.dtype`, *optional*):
-                The torch_dtype that is used to compute the device_map.
+            dtype (`torch.dtype`, *optional*):
+                The dtype that is used to compute the device_map.
         """
-        return torch_dtype
+        return dtype
+
+    def param_element_size(self, model: "PreTrainedModel", param_name: str) -> float:
+        "Return the element size (in bytes) for `param_name`."
+        if self.param_needs_quantization(model, param_name):
+            from accelerate.utils import CustomDtype
+
+            mapping = {
+                torch.int8: 1,
+                CustomDtype.INT4: 0.5,
+                CustomDtype.FP8: 1,
+                CustomDtype.INT2: 0.25,
+            }
+            # The value passed is actually not used when the method is overriden
+            if (custom_dtype := self.adjust_target_dtype(torch.float16)) in mapping:
+                return mapping[custom_dtype]
+        return model.get_parameter_or_buffer(param_name).element_size()
 
     def update_missing_keys(self, model, missing_keys: list[str], prefix: str) -> list[str]:
         """
         Override this method if you want to adjust the `missing_keys`.
-
-        Args:
-            missing_keys (`list[str]`, *optional*):
-                The list of missing keys in the checkpoint compared to the state dict of the model
-        """
-        return missing_keys
-
-    def update_unexpected_keys(self, model, unexpected_keys: list[str], prefix: str) -> list[str]:
-        """
-        Override this method if you want to adjust the `unexpected_keys`.
-
-        Args:
-            unexpected_keys (`list[str]`, *optional*):
-                The list of unexpected keys in the checkpoint compared to the state dict of the model
-        """
-        return unexpected_keys
-
-    def update_missing_keys_after_loading(self, model, missing_keys: list[str], prefix: str) -> list[str]:
-        """
-        Override this method if you want to adjust the `missing_keys` after loading the model params,
-        but before the model is post-processed.
 
         Args:
             missing_keys (`list[str]`, *optional*):
@@ -146,7 +203,10 @@ class HfQuantizer(ABC):
         """
         return expected_keys
 
-    def get_special_dtypes_update(self, model, torch_dtype: "torch.dtype") -> dict[str, "torch.dtype"]:
+    def update_unexpected_keys(self, model, unexpected_keys: list[str]) -> list[str]:
+        return unexpected_keys
+
+    def get_special_dtypes_update(self, model, dtype: "torch.dtype") -> dict[str, "torch.dtype"]:
         """
         returns dtypes for modules that are not quantized - used for the computation of the device_map in case
         one passes a str as a device_map. The method will use the `modules_to_not_convert` that is modified
@@ -155,39 +215,30 @@ class HfQuantizer(ABC):
         Args:
             model (`~transformers.PreTrainedModel`):
                 The model to quantize
-            torch_dtype (`torch.dtype`):
+            dtype (`torch.dtype`):
                 The dtype passed in `from_pretrained` method.
         """
 
         return {
-            name: torch_dtype
-            for name, _ in model.named_parameters()
-            if any(m in name for m in self.modules_to_not_convert)
+            name: dtype for name, _ in model.named_parameters() if any(m in name for m in self.modules_to_not_convert)
         }
 
     def adjust_max_memory(self, max_memory: dict[str, Union[int, str]]) -> dict[str, Union[int, str]]:
         """adjust max_memory argument for infer_auto_device_map() if extra memory is needed for quantization"""
         return max_memory
 
-    def check_quantized_param(
-        self,
-        model: "PreTrainedModel",
-        param_value: "torch.Tensor",
-        param_name: str,
-        state_dict: dict[str, Any],
-        **kwargs,
-    ) -> bool:
+    def param_needs_quantization(self, model: "PreTrainedModel", param_name: str, **kwargs) -> bool:
         """
-        checks if a loaded state_dict component is part of quantized param + some validation; only defined if
-        requires_parameters_quantization == True for quantization methods that require to create a new parameters
-        for quantization.
+        Check whether a given param needs quantization as defined by `create_quantized_param`.
         """
         return False
 
-    def create_quantized_param(self, *args, **kwargs) -> "torch.nn.Parameter":
+    def create_quantized_param(self, *args, **kwargs):
         """
-        takes needed components from state_dict and creates quantized param; only applicable if
-        requires_parameters_quantization == True
+        Take needed components from state_dict (those from which `param_needs_quantization` is True) and create
+        quantized param.
+        It usually also load the new param directly in the `model`.
+        Note: only applicable if requires_parameters_quantization == True.
         """
         if not self.requires_parameters_quantization:
             raise AttributeError(
@@ -206,7 +257,14 @@ class HfQuantizer(ABC):
         "updates the tp plan for the scales"
         return config
 
-    def preprocess_model(self, model: "PreTrainedModel", **kwargs):
+    def update_ep_plan(self, config):
+        "updates the tp plan for the scales"
+        return config
+
+    def _process_model_before_weight_loading(self, model, **kwargs):
+        return model
+
+    def preprocess_model(self, model: "PreTrainedModel", config, dtype=None, checkpoint_files=None, **kwargs):
         """
         Setting model attributes and/or converting model before weights loading. At this point
         the model should be initialized on the meta device so you can freely manipulate the skeleton
@@ -222,7 +280,18 @@ class HfQuantizer(ABC):
         model.quantization_method = self.quantization_config.quant_method
         if self.pre_quantized:
             self._convert_model_for_quantization(model)
-        return self._process_model_before_weight_loading(model, **kwargs)
+        self._process_model_before_weight_loading(model, **kwargs)
+
+        # We store the original dtype for quantized models as we cannot easily retrieve it
+        # once the weights have been quantized
+        # Note that once you have loaded a quantized model, you can't change its dtype so this will
+        # remain a single source of truth
+        original_dtype = dtype if dtype is not None else torch.get_default_dtype()
+        config._pre_quantization_dtype = original_dtype
+        _assign_original_dtype(model, original_dtype)
+
+    def _process_model_after_weight_loading(self, model: "PreTrainedModel", **kwargs):
+        return model
 
     def postprocess_model(self, model: "PreTrainedModel", **kwargs):
         """
@@ -236,6 +305,20 @@ class HfQuantizer(ABC):
                 The keyword arguments that are passed along `_process_model_after_weight_loading`.
         """
         return self._process_model_after_weight_loading(model, **kwargs)
+
+    def remove_quantization_config(self, model):
+        """
+        Remove the quantization config from the model.
+        """
+        if hasattr(model, "hf_quantizer"):
+            del model.hf_quantizer
+        if hasattr(model.config, "quantization_config"):
+            del model.config.quantization_config
+        if hasattr(model.config, "_pre_quantization_dtype"):
+            del model.config._pre_quantization_dtype
+        if hasattr(model, "quantization_method"):
+            del model.quantization_method
+        model.is_quantized = False
 
     def dequantize(self, model):
         """
@@ -253,9 +336,9 @@ class HfQuantizer(ABC):
 
         return model
 
-    def get_cuda_warm_up_factor(self):
+    def get_accelerator_warm_up_factor(self):
         """
-        The factor to be used in `caching_allocator_warmup` to get the number of bytes to pre-allocate to warm up cuda.
+        The factor to be used in `caching_allocator_warmup` to get the number of bytes to pre-allocate to warm up accelerator.
         A factor of 2 means we allocate all bytes in the empty model (since we allocate in fp16), a factor of 4 means
         we allocate half the memory of the weights residing in the empty model, etc...
         """
@@ -269,6 +352,12 @@ class HfQuantizer(ABC):
             f"{self.quantization_config.quant_method} has no implementation of `dequantize`, please raise an issue on GitHub."
         )
 
+    def get_param_name(self, param_name: str) -> str:
+        """
+        Override this method if you want to adjust the `param_name`.
+        """
+        return param_name
+
     @staticmethod
     def get_modules_to_not_convert(
         model: "PreTrainedModel",
@@ -276,8 +365,6 @@ class HfQuantizer(ABC):
         keep_in_fp32_modules: Optional[list[str]] = None,
         add_default_skips: bool = False,
     ):
-        from ..integrations import get_keys_to_not_convert
-
         if skip_modules is None or add_default_skips:
             modules_to_not_convert = get_keys_to_not_convert(model)
         else:
@@ -301,11 +388,13 @@ class HfQuantizer(ABC):
         """Flag indicating whether the quantized model can be compiled"""
         return False
 
-    @abstractmethod
-    def _process_model_before_weight_loading(self, model, **kwargs): ...
+    def get_state_dict_and_metadata(self, model, safe_serialization=False):
+        """Get state dict and metadata. Useful when we need to modify a bit the state dict due to quantization"""
+        return None, {}
 
-    @abstractmethod
-    def _process_model_after_weight_loading(self, model, **kwargs): ...
+    def update_state_dict_with_metadata(self, state_dict, metadata):
+        """Update state dict with metadata. Default behaviour returns state_dict"""
+        return state_dict
 
     @abstractmethod
     def is_serializable(self, safe_serialization=None): ...
@@ -319,7 +408,7 @@ class HfQuantizer(ABC):
 
         for name, module in model.named_modules():
             module_class_name = module.__class__.__name__
-            if module_class_name in MODULES_TO_PATCH_FOR_QUANTIZATION.keys() and (
+            if module_class_name in MODULES_TO_PATCH_FOR_QUANTIZATION and (
                 self.quantization_config.quant_method
                 in MODULES_TO_PATCH_FOR_QUANTIZATION[module_class_name]["quantization_methods"]
             ):

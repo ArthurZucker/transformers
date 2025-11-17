@@ -224,7 +224,6 @@ class OneFormerImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
             annotations,
             return_tensors="pt",
             instance_id_to_semantic_id=instance_id_to_semantic_id,
-            pad_and_return_pixel_mask=True,
         )
 
         return inputs
@@ -273,7 +272,7 @@ class OneFormerImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
 
     def test_post_process_semantic_segmentation(self):
         for image_processing_class in self.image_processor_list:
-            fature_extractor = image_processing_class(
+            feature_extractor = image_processing_class(
                 num_labels=self.image_processor_tester.num_classes,
                 max_seq_length=77,
                 task_seq_length=77,
@@ -283,7 +282,7 @@ class OneFormerImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
             )
             outputs = self.image_processor_tester.get_fake_oneformer_outputs()
 
-            segmentation = fature_extractor.post_process_semantic_segmentation(outputs)
+            segmentation = feature_extractor.post_process_semantic_segmentation(outputs)
 
             self.assertEqual(len(segmentation), self.image_processor_tester.batch_size)
             self.assertEqual(
@@ -295,7 +294,7 @@ class OneFormerImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
             )
 
             target_sizes = [(1, 4) for i in range(self.image_processor_tester.batch_size)]
-            segmentation = fature_extractor.post_process_semantic_segmentation(outputs, target_sizes=target_sizes)
+            segmentation = feature_extractor.post_process_semantic_segmentation(outputs, target_sizes=target_sizes)
 
             self.assertEqual(segmentation[0].shape, target_sizes[0])
 
@@ -376,20 +375,6 @@ class OneFormerImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
                 image_processor = image_processing_class(**config_dict)
 
             self.assertEqual(image_processor.metadata, metadata)
-
-    def test_removed_deprecated_kwargs(self):
-        image_processor_dict = dict(self.image_processor_dict)
-        image_processor_dict.pop("do_reduce_labels", None)
-        image_processor_dict["reduce_labels"] = True
-        # Only test for OneFormerImageProcessor
-        image_processing_class = self.image_processing_class
-        # test we are able to create the image processor with the deprecated kwargs
-        image_processor = image_processing_class(**image_processor_dict)
-        self.assertEqual(image_processor.do_reduce_labels, True)
-
-        # test we still support reduce_labels with config
-        image_processor = image_processing_class.from_dict(image_processor_dict)
-        self.assertEqual(image_processor.do_reduce_labels, True)
 
     def test_slow_fast_equivalence(self):
         if not self.test_slow_image_processor or not self.test_fast_image_processor:

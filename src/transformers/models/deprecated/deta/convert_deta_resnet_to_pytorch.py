@@ -238,7 +238,7 @@ def convert_deta_checkpoint(model_name, pytorch_dump_folder_path, push_to_hub):
     read_in_decoder_q_k_v(state_dict, config)
 
     # fix some prefixes
-    for key in state_dict.copy().keys():
+    for key in state_dict.copy():
         if "transformer.decoder.class_embed" in key or "transformer.decoder.bbox_embed" in key:
             val = state_dict.pop(key)
             state_dict[key.replace("transformer.decoder", "model.decoder")] = val
@@ -313,7 +313,9 @@ if __name__ == "__main__":
         help="Path to the folder to output PyTorch model.",
     )
     parser.add_argument(
-        "--push_to_hub", action="store_true", help="Whether or not to push the converted model to the 🤗 hub."
+        "--push_to_hub",
+        action="store_true",
+        help="Whether or not to push the converted model to the Hugging Face hub.",
     )
     args = parser.parse_args()
     convert_deta_checkpoint(args.model_name, args.pytorch_dump_folder_path, args.push_to_hub)

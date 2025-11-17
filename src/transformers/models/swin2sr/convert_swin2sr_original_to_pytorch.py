@@ -124,7 +124,7 @@ def rename_key(name, config):
 
 
 def convert_state_dict(orig_state_dict, config):
-    for key in orig_state_dict.copy().keys():
+    for key in orig_state_dict.copy():
         val = orig_state_dict.pop(key)
 
         if "qkv" in key:
@@ -153,7 +153,6 @@ def convert_state_dict(orig_state_dict, config):
                 orig_state_dict[f"swin2sr.encoder.stages.{stage_num}.layers.{block_num}.attention.self.value.bias"] = (
                     val[-dim:]
                 )
-            pass
         else:
             orig_state_dict[rename_key(key, config)] = val
 

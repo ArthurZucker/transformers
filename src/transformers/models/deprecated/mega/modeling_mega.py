@@ -19,11 +19,12 @@ from typing import Optional, Union
 
 import torch
 import torch.nn.functional as F
-import torch.utils.checkpoint
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
+from .... import initialization as init
 from ....activations import ACT2FN
+from ....cache_utils import Cache
 from ....modeling_outputs import (
     BaseModelOutputWithPoolingAndCrossAttentions,
     CausalLMOutputWithCrossAttentions,
@@ -153,8 +154,6 @@ class MegaRotaryRelativePositionalBias(nn.Module):
         self.sine, self.cosine = MegaRotaryRelativePositionalBias.get_sinusoid_embeddings(
             config.max_positions, self.embed_dim
         )
-        # alpha and beta parameters for the rotary bias; beta renamed to b_param to avoid clashes with tf/flax weight handling
-        # in loading pretrained weights
         self.alpha = nn.Parameter(torch.Tensor(1, self.embed_dim))
         self.b_param = nn.Parameter(torch.Tensor(1, self.embed_dim))
         self.register_buffer("_float_tensor", torch.FloatTensor([0.0]))
@@ -624,7 +623,7 @@ class MegaGatedCrossAttention(nn.Module):
         key: Optional[torch.Tensor],
         value: Optional[torch.Tensor],
         key_padding_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[tuple[torch.Tensor]] = None,
+        past_key_values: Optional[Cache] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
@@ -909,7 +908,7 @@ class MegaMovingAverageGatedAttention(nn.Module):
         input,
         padding_mask: Optional[torch.Tensor] = None,
         causal_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[tuple[torch.Tensor]] = None,
+        past_key_values: Optional[Cache] = None,
         output_attentions=False,
         use_cache=False,
     ):
@@ -1180,7 +1179,7 @@ class MegaBlock(nn.Module):
         causal_mask: Optional[torch.LongTensor] = None,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_value: Optional[tuple[torch.FloatTensor]] = None,
+        past_key_values: Optional[Cache] = None,
         output_attentions: Optional[bool] = False,
         use_cache: bool = False,
     ) -> tuple[torch.Tensor]:
@@ -1202,14 +1201,14 @@ class MegaBlock(nn.Module):
             encoder_attention_mask (`torch.LongTensor` of shape `(batch_size, source_sequence_length)`, *optional*):
                 Indicates which entries in the cross/source sequence are to be ignored (mostly due to padding), where
                 elements are either 1 for *not masked* or 0 for *masked*.
-            past_key_value (`tuple(torch.Tensor)`, *optional*):
+            past_key_values (`tuple(torch.Tensor)`, *optional*):
                 The hidden states returned from the previous timestep during incremental decoding; expects that
                 self-attention key, value, and EMA states are the first 3 entries in the tuple, and (if doing
                 cross-attention) cross-attention key and value are the last 2 entries in the tuple
             output_attentions (`bool`, default `False`):
                 Whether to return self-attention weights
             use_cache (`bool`, default `False`):
-                Whether to perform incremental decoding; uses `past_key_value` as prior state, and returns the updated
+                Whether to perform incremental decoding; uses `past_key_values` as prior state, and returns the updated
                 states for use in the next step
 
         Returns:
@@ -1244,7 +1243,7 @@ class MegaBlock(nn.Module):
         # sequence length as the input tensor; if we're caching incremental states, we assume the input
         # sequence length is 1 (Mega will break otherwise), so we take the padding mask for the final
         # token in the input (mask is received as [batch X sequence length])
-        if use_cache and (past_key_value is not None) and (attention_mask is not None):
+        if use_cache and (past_key_values is not None) and (attention_mask is not None):
             mega_padding_mask = attention_mask[:, -1].unsqueeze(-1)
         else:
             mega_padding_mask = attention_mask
@@ -1253,7 +1252,7 @@ class MegaBlock(nn.Module):
             input=hidden_states,
             padding_mask=mega_padding_mask,
             causal_mask=causal_mask,
-            past_key_values=past_key_value,
+            past_key_values=past_key_values,
             output_attentions=output_attentions,
             use_cache=use_cache,
         )
@@ -1272,7 +1271,7 @@ class MegaBlock(nn.Module):
                 key=encoder_hidden_states,
                 value=encoder_hidden_states,
                 key_padding_mask=encoder_attention_mask,
-                past_key_values=past_key_value,
+                past_key_values=past_key_values,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
             )
@@ -1334,49 +1333,55 @@ class MegaPreTrainedModel(PreTrainedModel):
     supports_gradient_checkpointing = False
     _no_split_modules = ["MegaMovingAverageGatedAttention"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights"""
         if isinstance(module, MegaMultiDimensionDampedEma):
             with torch.no_grad():
                 # delta & alpha
-                nn.init.normal_(module.damping_factor, mean=0.0, std=self.config.ema_delta_alpha_range)
-                nn.init.normal_(module.decay_factor, mean=0.0, std=self.config.ema_delta_alpha_range)
+                init.normal_(module.damping_factor, mean=0.0, std=self.config.ema_delta_alpha_range)
+                init.normal_(module.decay_factor, mean=0.0, std=self.config.ema_delta_alpha_range)
                 # beta [1, -1, 1, -1, ...] seems more stable.
                 val = torch.ones(self.config.ema_projection_size, 1)
                 if self.config.ema_projection_size > 1:
                     idx = torch.tensor(list(range(1, self.config.ema_projection_size, 2)))
                     val.index_fill_(0, idx, -1.0)
-                module.ema_expansion_matrix.normal_(mean=0.0, std=self.config.ema_beta_range).add_(val)
+                init.copy_(
+                    module.ema_expansion_matrix,
+                    torch.normal(mean=0.0, std=self.config.ema_beta_range, size=module.ema_expansion_matrix.shape)
+                    + val,
+                )
                 # gamma & omega
-                nn.init.normal_(module.kernel_projection_matrix, mean=0.0, std=self.config.ema_gamma_omega_range)
-                nn.init.normal_(module.residual_weight, mean=0.0, std=self.config.ema_gamma_omega_range)
+                init.normal_(module.kernel_projection_matrix, mean=0.0, std=self.config.ema_gamma_omega_range)
+                init.normal_(module.residual_weight, mean=0.0, std=self.config.ema_gamma_omega_range)
         elif isinstance(module, MegaSimpleRelativePositionalBias):
-            nn.init.normal_(module.rel_pos_bias, mean=0.0, std=self.config.initializer_range)
+            init.normal_(module.rel_pos_bias, mean=0.0, std=self.config.initializer_range)
         elif isinstance(module, MegaRotaryRelativePositionalBias):
-            nn.init.normal_(module.alpha, mean=0.0, std=self.config.initializer_range)
-            nn.init.normal_(module.b_param, mean=0.0, std=self.config.initializer_range)
+            init.normal_(module.alpha, mean=0.0, std=self.config.initializer_range)
+            init.normal_(module.b_param, mean=0.0, std=self.config.initializer_range)
         elif isinstance(module, MegaScaleNorm):
             if self.config.norm_affine:
-                nn.init.constant_(module.scalar, 1.0)
+                init.constant_(module.scalar, 1.0)
         elif isinstance(module, MegaRMSNorm):
             if self.config.norm_affine:
-                nn.init.constant_(module.weight, 1.0)
+                init.constant_(module.weight, 1.0)
         elif isinstance(module, MegaMovingAverageGatedAttention):
             # linear layers covered separately by the generic nn.Linear init below
-            nn.init.normal_(module.qk_weight, mean=0.0, std=self.config.initializer_range)
-            nn.init.constant_(module.qk_bias, 0.0)
+            init.normal_(module.qk_weight, mean=0.0, std=self.config.initializer_range)
+            init.constant_(module.qk_bias, 0.0)
         elif isinstance(module, nn.Linear):
             # initializes all linear layers in the entire network
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            init.normal_(module.weight, mean=0.0, std=self.config.initializer_range)
             if module.bias is not None:
-                module.bias.data.zero_()
+                init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
+            init.normal_(module.weight, mean=0.0, std=self.config.initializer_range)
+            # Here we need the check explicitly, as we slice the weight in the `zeros_` call, so it looses the flag
+            if module.padding_idx is not None and not getattr(module.weight, "_is_hf_initialized", False):
+                init.zeros_(module.weight[module.padding_idx])
         elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
+            init.zeros_(module.bias)
+            init.ones_(module.weight)
 
 
 MEGA_START_DOCSTRING = r"""
@@ -1488,7 +1493,7 @@ class MegaModel(MegaPreTrainedModel):
         inputs_embeds: Optional[torch.Tensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[list[torch.FloatTensor]] = None,
+        past_key_values: Optional[Cache] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -1592,7 +1597,7 @@ class MegaModel(MegaPreTrainedModel):
                 causal_mask=causal_mask,
                 encoder_hidden_states=encoder_hidden_states,
                 encoder_attention_mask=encoder_attention_mask,
-                past_key_value=current_decoder_cache,
+                past_key_values=current_decoder_cache,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
             )
@@ -1640,7 +1645,7 @@ class MegaModel(MegaPreTrainedModel):
     """MEGA Model with a `language modeling` head on top for CLM fine-tuning.""", MEGA_START_DOCSTRING
 )
 class MegaForCausalLM(MegaPreTrainedModel):
-    _tied_weights_keys = ["lm_head.weight"]
+    _tied_weights_keys = {"lm_head.weight": "mega.embedding_layer.word_embeddings.weight"}
 
     def __init__(self, config: MegaConfig):
         super().__init__(config)
@@ -1673,7 +1678,7 @@ class MegaForCausalLM(MegaPreTrainedModel):
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[tuple[tuple[torch.FloatTensor]]] = None,
+        past_key_values: Optional[Cache] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -1784,18 +1789,10 @@ class MegaForCausalLM(MegaPreTrainedModel):
 
         return {"input_ids": input_ids, "attention_mask": attention_mask, "past_key_values": past_key_values}
 
-    def _reorder_cache(self, past_key_values, beam_idx):
-        reordered_past = ()
-        for layer_past in past_key_values:
-            reordered_past += (
-                tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past),
-            )
-        return reordered_past
-
 
 @add_start_docstrings("""MEGA Model with a `language modeling` head on top.""", MEGA_START_DOCSTRING)
 class MegaForMaskedLM(MegaPreTrainedModel):
-    _tied_weights_keys = ["mlm_head.weight"]
+    _tied_weights_keys = {"mlm_head.weight": "mega.embedding_layer.word_embeddings.weight"}
 
     def __init__(self, config: MegaConfig):
         super().__init__(config)

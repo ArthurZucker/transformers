@@ -69,10 +69,6 @@ class Split(Enum):
 
 
 class GlueDataset(Dataset):
-    """
-    This will be superseded by a framework-agnostic approach soon.
-    """
-
     args: GlueDataTrainingArguments
     output_mode: str
     features: list[InputFeatures]
@@ -86,7 +82,7 @@ class GlueDataset(Dataset):
         cache_dir: Optional[str] = None,
     ):
         warnings.warn(
-            "This dataset will be removed from the library soon, preprocessing should be handled with the 🤗 Datasets "
+            "This dataset will be removed from the library soon, preprocessing should be handled with the Hugging Face Datasets "
             "library. You can have a look at this example script for pointers: "
             "https://github.com/huggingface/transformers/blob/main/examples/pytorch/text-classification/run_glue.py",
             FutureWarning,

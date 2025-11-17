@@ -23,11 +23,13 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
+from ... import initialization as init
 from ...activations import ACT2FN
 from ...file_utils import ModelOutput, is_scipy_available, requires_backends
 from ...modeling_layers import GradientCheckpointingLayer
 from ...modeling_outputs import BaseModelOutput, BaseModelOutputWithCrossAttentions
 from ...modeling_utils import PreTrainedModel
+from ...pytorch_utils import compile_compatible_method_lru_cache
 from ...utils import auto_docstring, is_accelerate_available, logging
 from ...utils.backbone_utils import load_backbone
 from .configuration_mask2former import Mask2FormerConfig
@@ -64,7 +66,7 @@ class Mask2FormerPixelDecoderOutput(ModelOutput):
         or when `config.output_attentions=True`
     """
 
-    multi_scale_features: tuple[torch.FloatTensor] = None
+    multi_scale_features: Optional[tuple[torch.FloatTensor]] = None
     mask_features: Optional[torch.FloatTensor] = None
     attentions: Optional[tuple[torch.FloatTensor]] = None
 
@@ -97,8 +99,8 @@ class Mask2FormerMaskedAttentionDecoderOutput(BaseModelOutputWithCrossAttentions
     last_hidden_state: Optional[torch.FloatTensor] = None
     hidden_states: Optional[tuple[torch.FloatTensor]] = None
     attentions: Optional[torch.FloatTensor] = None
-    masks_queries_logits: tuple[torch.FloatTensor] = None
-    intermediate_hidden_states: tuple[torch.FloatTensor] = None
+    masks_queries_logits: Optional[tuple[torch.FloatTensor]] = None
+    intermediate_hidden_states: Optional[tuple[torch.FloatTensor]] = None
 
 
 @dataclass
@@ -131,7 +133,7 @@ class Mask2FormerPixelLevelModuleOutput(ModelOutput):
     encoder_last_hidden_state: Optional[torch.FloatTensor] = None
     encoder_hidden_states: Optional[tuple[torch.FloatTensor]] = None
     decoder_last_hidden_state: Optional[torch.FloatTensor] = None
-    decoder_hidden_states: tuple[torch.FloatTensor] = None
+    decoder_hidden_states: Optional[tuple[torch.FloatTensor]] = None
 
 
 @dataclass
@@ -177,8 +179,8 @@ class Mask2FormerModelOutput(ModelOutput):
     encoder_hidden_states: Optional[tuple[torch.FloatTensor]] = None
     pixel_decoder_hidden_states: Optional[tuple[torch.FloatTensor]] = None
     transformer_decoder_hidden_states: Optional[tuple[torch.FloatTensor]] = None
-    transformer_decoder_intermediate_states: tuple[torch.FloatTensor] = None
-    masks_queries_logits: tuple[torch.FloatTensor] = None
+    transformer_decoder_intermediate_states: Optional[tuple[torch.FloatTensor]] = None
+    masks_queries_logits: Optional[tuple[torch.FloatTensor]] = None
     attentions: Optional[tuple[torch.FloatTensor]] = None
 
 
@@ -782,7 +784,7 @@ class Mask2FormerLoss(nn.Module):
         """
         Computes the average number of target masks across the batch, for normalization purposes.
         """
-        num_masks = sum([len(classes) for classes in class_labels])
+        num_masks = sum(len(classes) for classes in class_labels)
         num_masks = torch.as_tensor(num_masks, dtype=torch.float, device=device)
         world_size = 1
         if is_accelerate_available():
@@ -855,10 +857,17 @@ class Mask2FormerSinePositionEmbedding(nn.Module):
         self.normalize = normalize
         self.scale = 2 * math.pi if scale is None else scale
 
-    def forward(self, x: Tensor, mask: Optional[Tensor] = None) -> Tensor:
+    @compile_compatible_method_lru_cache(maxsize=1)
+    def forward(
+        self,
+        shape: torch.Size,
+        device: Union[torch.device, str],
+        dtype: torch.dtype,
+        mask: Optional[Tensor] = None,
+    ) -> Tensor:
         if mask is None:
-            mask = torch.zeros((x.size(0), x.size(2), x.size(3)), device=x.device, dtype=torch.bool)
-        not_mask = (~mask).to(x.dtype)
+            mask = torch.zeros((shape[0], shape[2], shape[3]), device=device, dtype=torch.bool)
+        not_mask = (~mask).to(dtype)
         y_embed = not_mask.cumsum(1)
         x_embed = not_mask.cumsum(2)
         if self.normalize:
@@ -866,7 +875,7 @@ class Mask2FormerSinePositionEmbedding(nn.Module):
             y_embed = y_embed / (y_embed[:, -1:, :] + eps) * self.scale
             x_embed = x_embed / (x_embed[:, :, -1:] + eps) * self.scale
 
-        dim_t = torch.arange(self.num_pos_feats, dtype=torch.int64, device=x.device).type_as(x)
+        dim_t = torch.arange(self.num_pos_feats, dtype=torch.int64, device=device).to(dtype)
         dim_t = self.temperature ** (2 * torch.div(dim_t, 2, rounding_mode="floor") / self.num_pos_feats)
 
         pos_x = x_embed[:, :, :, None] / dim_t
@@ -1295,7 +1304,7 @@ class Mask2FormerPixelDecoder(nn.Module):
         position_embeddings = []
         for level, x in enumerate(features[::-1][: self.num_feature_levels]):
             input_embeds.append(self.input_projections[level](x))
-            position_embeddings.append(self.position_embedding(x))
+            position_embeddings.append(self.position_embedding(x.shape, x.device, x.dtype))
 
         masks = [
             torch.zeros((x.size(0), x.size(2), x.size(3)), device=x.device, dtype=torch.bool) for x in input_embeds
@@ -2052,7 +2061,11 @@ class Mask2FormerTransformerModule(nn.Module):
 
         for i in range(self.num_feature_levels):
             size_list.append(multi_scale_features[i].shape[-2:])
-            multi_stage_positional_embeddings.append(self.position_embedder(multi_scale_features[i], None).flatten(2))
+            multi_stage_positional_embeddings.append(
+                self.position_embedder(
+                    multi_scale_features[i].shape, multi_scale_features[i].device, multi_scale_features[i].dtype, None
+                ).flatten(2)
+            )
             multi_stage_features.append(
                 self.input_projections[i](multi_scale_features[i]).flatten(2)
                 + self.level_embed.weight[i][None, :, None]
@@ -2088,7 +2101,9 @@ class Mask2FormerPreTrainedModel(PreTrainedModel):
     config: Mask2FormerConfig
     base_model_prefix = "model"
     main_input_name = "pixel_values"
+    input_modalities = "image"
 
+    @torch.no_grad()
     def _init_weights(self, module: nn.Module):
         xavier_std = self.config.init_xavier_std
         std = self.config.init_std
@@ -2097,11 +2112,11 @@ class Mask2FormerPreTrainedModel(PreTrainedModel):
             if module.input_projections is not None:
                 for input_projection in module.input_projections:
                     if not isinstance(input_projection, nn.Sequential):
-                        nn.init.xavier_uniform_(input_projection.weight, gain=xavier_std)
-                        nn.init.constant_(input_projection.bias, 0)
+                        init.xavier_uniform_(input_projection.weight, gain=xavier_std)
+                        init.constant_(input_projection.bias, 0)
 
         elif isinstance(module, Mask2FormerPixelDecoderEncoderMultiscaleDeformableAttention):
-            nn.init.constant_(module.sampling_offsets.weight.data, 0.0)
+            init.constant_(module.sampling_offsets.weight, 0.0)
             thetas = torch.arange(module.n_heads, dtype=torch.int64).float() * (2.0 * math.pi / module.n_heads)
             grid_init = torch.stack([thetas.cos(), thetas.sin()], -1)
             grid_init = (
@@ -2111,42 +2126,43 @@ class Mask2FormerPreTrainedModel(PreTrainedModel):
             )
             for i in range(module.n_points):
                 grid_init[:, :, i, :] *= i + 1
-            with torch.no_grad():
-                module.sampling_offsets.bias = nn.Parameter(grid_init.view(-1))
 
-            nn.init.constant_(module.attention_weights.weight.data, 0.0)
-            nn.init.constant_(module.attention_weights.bias.data, 0.0)
-            nn.init.xavier_uniform_(module.value_proj.weight.data)
-            nn.init.constant_(module.value_proj.bias.data, 0.0)
-            nn.init.xavier_uniform_(module.output_proj.weight.data)
-            nn.init.constant_(module.output_proj.bias.data, 0.0)
+            init.copy_(module.sampling_offsets.bias, grid_init.view(-1))
+
+            init.constant_(module.attention_weights.weight, 0.0)
+            init.constant_(module.attention_weights.bias, 0.0)
+            init.xavier_uniform_(module.value_proj.weight)
+            init.constant_(module.value_proj.bias, 0.0)
+            init.xavier_uniform_(module.output_proj.weight)
+            init.constant_(module.output_proj.bias, 0.0)
 
         elif isinstance(module, Mask2FormerMaskedAttentionDecoderLayer):
             for p in module.parameters():
                 if p.dim() > 1:
-                    nn.init.xavier_uniform_(p, gain=xavier_std)
-            module.cross_attn.in_proj_bias.data.zero_()
+                    init.xavier_uniform_(p, gain=xavier_std)
+            init.zeros_(module.cross_attn.in_proj_bias)
 
         elif isinstance(module, Mask2FormerPixelDecoder):
-            nn.init.normal_(module.level_embed, std=0)
+            init.normal_(module.level_embed, std=0)
 
         elif isinstance(module, (nn.Linear, nn.Conv2d, nn.BatchNorm2d)):
-            module.weight.data.normal_(mean=0.0, std=std)
+            init.normal_(module.weight, mean=0.0, std=std)
             if module.bias is not None:
-                module.bias.data.zero_()
+                init.zeros_(module.bias)
 
         elif isinstance(module, (nn.LayerNorm, nn.GroupNorm)):
-            module.weight.data.fill_(1.0)
-            module.bias.data.zero_()
+            init.ones_(module.weight)
+            init.zeros_(module.bias)
 
         elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
+            init.normal_(module.weight, mean=0.0, std=std)
+            # Here we need the check explicitly, as we slice the weight in the `zeros_` call, so it looses the flag
+            if module.padding_idx is not None and not getattr(module.weight, "_is_hf_initialized", False):
+                init.zeros_(module.weight[module.padding_idx])
 
         if hasattr(module, "reference_points"):
-            nn.init.xavier_uniform_(module.reference_points.weight.data, gain=1.0)
-            nn.init.constant_(module.reference_points.bias.data, 0.0)
+            init.xavier_uniform_(module.reference_points.weight, gain=1.0)
+            init.constant_(module.reference_points.bias, 0.0)
 
 
 @auto_docstring
