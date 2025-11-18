@@ -18,6 +18,7 @@ import json
 import os
 import re
 from collections import Counter
+from datetime import datetime, timezone
 from typing import Callable
 
 import requests
@@ -145,6 +146,38 @@ def _normalize_test_nodeid(nodeid: str) -> str:
     test_name = re.sub(r"_\d{2,}.*$", "", test_name)
     normalized = "::".join(parts[:-1] + [test_name])
     return normalized
+
+
+def _collect_metadata(workflow_id: str) -> dict[str, str | None]:
+    repo_owner = os.environ.get("CIRCLE_PROJECT_USERNAME")
+    repo_name = os.environ.get("CIRCLE_PROJECT_REPONAME")
+    repo_slug = "/".join(part for part in [repo_owner, repo_name] if part)
+    commit_sha = os.environ.get("CIRCLE_SHA1")
+    branch = os.environ.get("CIRCLE_BRANCH")
+    pull_request = os.environ.get("CIRCLE_PULL_REQUEST")
+    pr_number = os.environ.get("CIRCLE_PR_NUMBER")
+    if not pr_number and pull_request and "/" in pull_request:
+        pr_number = pull_request.rsplit("/", 1)[-1]
+    build_num = os.environ.get("CIRCLE_BUILD_NUM")
+    timestamp = os.environ.get("CIRCLE_WORKFLOW_CREATED_AT")
+    if not timestamp:
+        timestamp = datetime.now(timezone.utc).isoformat()
+    commit_short = (commit_sha or "unknown")[:8]
+    dataset_subfolder = f"{repo_slug.replace('/', '__') or 'unknown_repo'}/pr-{pr_number or 'none'}/sha-{commit_short}/workflow-{workflow_id}"
+    metadata = {
+        "workflow_id": workflow_id,
+        "repo_owner": repo_owner,
+        "repo_name": repo_name,
+        "repository": repo_slug,
+        "branch": branch,
+        "commit_sha": commit_sha,
+        "pull_request": pull_request,
+        "pull_request_number": pr_number,
+        "build_number": build_num,
+        "collected_at": timestamp,
+        "dataset_subfolder": dataset_subfolder,
+    }
+    return metadata
 
 
 def process_circleci_workflow(
@@ -286,6 +319,20 @@ def process_circleci_workflow(
     markdown_text = "\n".join(markdown_buffer)
     with open(os.path.join(output_dir, "failure_summary.md"), "w") as fp:
         fp.write(markdown_text)
+
+    metadata = _collect_metadata(workflow_id)
+    aggregate_payload = {
+        "metadata": metadata,
+        "jobs": workflow_summary,
+        "tests": new_workflow_summary,
+        "failures": failure_entries,
+        "failures_by_test": failures_by_test,
+        "failures_by_model": failures_by_model,
+    }
+    with open(os.path.join(output_dir, "collection_summary.json"), "w") as fp:
+        json.dump(aggregate_payload, fp, indent=4)
+    with open(os.path.join(output_dir, "metadata.json"), "w") as fp:
+        json.dump(metadata, fp, indent=4)
 
 
 def main():

@@ -26,7 +26,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: python -m pip install requests
+        run: python -m pip install requests huggingface_hub
 
       - name: Wait for CircleCI check suite completion
         env:
@@ -69,12 +69,20 @@ jobs:
         run: |
           python utils/process_circleci_workflow_test_reports.py --workflow_id "${{ steps.circleci.outputs.workflow_id }}"
 
-      - name: Post comment with failure summary
+      - name: Upload summaries to Hub
+        env:
+          HF_TOKEN: ${{ secrets.TRANSFORMERS_HUB_BOT_HF_TOKEN }}
+          CIRCLECI_RESULTS_DATASET_ID: transformers-community/circleci-test-results
+        run: |
+          python utils/upload_circleci_results.py --source-dir outputs --dataset-id "${CIRCLECI_RESULTS_DATASET_ID}"
+
+      - name: Post comment with helper link
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           github_repository: ${{ github.repository }}
           pr_number: ${{ github.event.pull_request.number }}
+          pr_sha: ${{ github.event.pull_request.head.sha }}
         run: |
           if [ ! -f outputs/failure_summary.json ]; then
             echo "failure_summary.json missing, skipping comment."
@@ -85,7 +93,26 @@ jobs:
             echo "No failures detected, skipping PR comment."
             exit 0
           fi
-          body="$(cat outputs/failure_summary.md)"
+          SPACE_SLUG="transformers-community/circleci-test-collection-helper"
+          SPACE_BASE="https://huggingface.co/spaces/${SPACE_SLUG}"
+          QUERY=$(python - <<'PY'
+import os
+from urllib.parse import urlencode
+
+params = {
+    "repo": os.environ.get("github_repository"),
+    "pr": os.environ.get("pr_number"),
+    "sha": os.environ.get("pr_sha"),
+}
+print(urlencode({k: v for k, v in params.items() if v}))
+PY
+)
+          if [ -n "$QUERY" ]; then
+            SPACE_URL="${SPACE_BASE}?${QUERY}"
+          else
+            SPACE_URL="${SPACE_BASE}"
+          fi
+          body="View the CircleCI test collection helper for this PR:\n\n${SPACE_URL}"
           gh api \
             --method POST \
             -H "Accept: application/vnd.github+json" \
